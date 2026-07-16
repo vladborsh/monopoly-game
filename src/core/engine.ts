@@ -107,11 +107,15 @@ function chargeCash(
   if (remaining < 0) {
     let next = withPlayer(state, payerId, (p) => ({ ...p, cash: 0, bankrupt: true }));
     const releasedOwnership = { ...next.ownership };
+    const releasedHouses = { ...next.houses };
     for (const tileId of Object.keys(releasedOwnership)) {
       const idNum = Number(tileId);
-      if (releasedOwnership[idNum] === payerId) releasedOwnership[idNum] = null;
+      if (releasedOwnership[idNum] === payerId) {
+        releasedOwnership[idNum] = null;
+        releasedHouses[idNum] = 0;
+      }
     }
-    next = { ...next, ownership: releasedOwnership };
+    next = { ...next, ownership: releasedOwnership, houses: releasedHouses };
     events.push({ type: "PlayerBankrupt", playerId: payerId, creditorId });
     return next;
   }

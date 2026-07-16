@@ -86,6 +86,7 @@ export class GameController {
     if (this.busy) return;
     this.busy = true;
     try {
+      const prevCash = Object.fromEntries(this.state.players.map((p) => [p.id, p.cash]));
       const { state: nextState, events } = reduce(this.state, action, this.config);
 
       let displayState = this.state;
@@ -115,6 +116,11 @@ export class GameController {
       this.state = { ...nextState, log: [...nextState.log, ...newLines].slice(-MAX_LOG_ENTRIES) };
       saveGame(this.state, this.config, this.players);
       this.render();
+
+      const moneyChanges = nextState.players
+        .map((p) => ({ playerId: p.id, name: playerNames[p.id] ?? p.id, delta: p.cash - (prevCash[p.id] ?? p.cash) }))
+        .filter((c) => c.delta !== 0);
+      if (moneyChanges.length > 0) this.ui.showMoneyChanges(moneyChanges, this.playerColors);
     } finally {
       this.busy = false;
     }

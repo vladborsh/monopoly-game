@@ -121,9 +121,11 @@ export class GameUI {
   private restartForm: HTMLFormElement;
   private playerCountInput: HTMLInputElement;
   private startingCashInput: HTMLInputElement;
+  private snackbarsEl: HTMLElement;
 
-  constructor(root: HTMLElement) {
+  constructor(root: HTMLElement, snackbarsRoot: HTMLElement) {
     this.root = root;
+    this.snackbarsEl = snackbarsRoot;
     this.root.innerHTML = `
       <div class="ui-panel">
         <div class="ui-header">
@@ -316,6 +318,17 @@ export class GameUI {
       btn.disabled = player.cash < cost;
       btn.addEventListener("click", () => this.emitBuildHouse(tile.id));
       this.actionsEl.appendChild(btn);
+    }
+  }
+
+  showMoneyChanges(changes: { playerId: string; name: string; delta: number }[], colors: PlayerColorMap): void {
+    for (const change of changes) {
+      const toast = document.createElement("div");
+      toast.className = `ui-snackbar ${change.delta > 0 ? "ui-snackbar--gain" : "ui-snackbar--loss"}`;
+      toast.style.borderLeftColor = colors[change.playerId] ?? "#fff";
+      toast.textContent = `${change.name}: ${change.delta > 0 ? "+" : ""}${formatMoney(change.delta)}`;
+      this.snackbarsEl.appendChild(toast);
+      setTimeout(() => toast.remove(), 2500);
     }
   }
 

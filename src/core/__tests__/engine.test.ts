@@ -109,6 +109,24 @@ describe("rent", () => {
     expect(state.players[0]?.cash).toBe(0);
     expect(Object.values(state.ownership).some((o) => o === "A")).toBe(false);
   });
+
+  it("clears houses on properties released by a bankrupt player", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 3: "B", 1: "A" },
+      houses: { ...state.houses, 1: 2 },
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 1_000 } : p)),
+    };
+
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    ({ state } = reduce(state, { type: "PAY_RENT" }, config));
+
+    expect(state.players[0]?.bankrupt).toBe(true);
+    expect(state.ownership[1]).toBeNull();
+    expect(state.houses[1]).toBe(0);
+  });
 });
 
 describe("rent-or-buyout choice", () => {
