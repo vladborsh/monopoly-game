@@ -11,6 +11,7 @@ export interface Loan {
   playerId: string;
   kind: "house" | "property";
   principal: number;
+  owed: number;
   roundsElapsed: number;
 }
 

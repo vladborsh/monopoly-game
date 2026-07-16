@@ -119,7 +119,7 @@ export function describeEvent(
     case "LoanRepaid":
       return [
         name(event.playerId),
-        { text: ` repaid the loan on ${board[event.tileId]?.name ?? event.tileId} (${formatMoney(event.principal)})` },
+        { text: ` repaid the loan on ${board[event.tileId]?.name ?? event.tileId} (${formatMoney(event.amount)})` },
       ];
     case "LoanInterestCharged":
       return event.amount > 0
@@ -398,8 +398,8 @@ export class GameUI {
     for (const loan of loans) {
       const tileName = board[loan.tileId]?.name ?? loan.tileId;
       const btn = document.createElement("button");
-      btn.textContent = `Repay loan on ${tileName} — ${formatMoney(loan.principal)}`;
-      btn.disabled = player.cash < loan.principal;
+      btn.textContent = `Repay loan on ${tileName} — ${formatMoney(loan.owed)}`;
+      btn.disabled = player.cash < loan.owed;
       btn.addEventListener("click", () => this.emitRepayLoan(loan.tileId));
       this.actionsEl.appendChild(btn);
     }

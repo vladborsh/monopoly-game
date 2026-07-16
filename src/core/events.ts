@@ -23,6 +23,6 @@ export type GameEvent =
   | { type: "HouseBuilt"; playerId: string; tileId: number; houses: number }
   | { type: "LoanRequired"; playerId: string; creditorId: string | null; amount: number }
   | { type: "LoanTaken"; playerId: string; tileId: number; kind: "house" | "property"; principal: number }
-  | { type: "LoanRepaid"; playerId: string; tileId: number; kind: "house" | "property"; principal: number }
+  | { type: "LoanRepaid"; playerId: string; tileId: number; kind: "house" | "property"; amount: number }
   | { type: "LoanInterestCharged"; playerId: string; tileId: number; amount: number }
   | { type: "LoanCollateralSeized"; playerId: string; tileId: number; kind: "house" | "property" };

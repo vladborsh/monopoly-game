@@ -599,7 +599,7 @@ describe("loans", () => {
 
     expect(state.turnPhase).toBe("turn_over");
     expect(state.pendingDebt).toBeNull();
-    expect(state.loans).toEqual([{ tileId: 1, playerId: "A", kind: "property", principal: 48_000, roundsElapsed: 0 }]);
+    expect(state.loans).toEqual([{ tileId: 1, playerId: "A", kind: "property", principal: 48_000, owed: 60_000, roundsElapsed: 0 }]);
     // 1_000 + 48_000 loan - 6_000 rent
     expect(state.players[0]?.cash).toBe(1_000 + 48_000 - 6_000);
     expect(state.players[1]?.cash).toBe(500_000 + 6_000);
@@ -619,8 +619,8 @@ describe("loans", () => {
 
     ({ state } = reduce(state, { type: "TAKE_LOAN", tileId: 1, kind: "house" }, config));
 
-    // tile 1 is in the "gold" group, house cost 50_000 -> principal 40_000
-    expect(state.loans).toEqual([{ tileId: 1, playerId: "A", kind: "house", principal: 40_000, roundsElapsed: 0 }]);
+    // tile 1 is in the "gold" group, house cost 50_000 -> principal 40_000, owed 50_000
+    expect(state.loans).toEqual([{ tileId: 1, playerId: "A", kind: "house", principal: 40_000, owed: 50_000, roundsElapsed: 0 }]);
     expect(state.ownership[1]).toBe("A");
     expect(state.houses[1]).toBe(2);
     expect(state.turnPhase).toBe("turn_over");
@@ -703,18 +703,18 @@ describe("loans", () => {
     expect(bankrupt.state).toEqual(before);
   });
 
-  it("REPAY_LOAN deducts the principal and removes the loan", () => {
+  it("REPAY_LOAN deducts the full owed amount and removes the loan", () => {
     let state = createInitialState(players(), config, 1);
     state = {
       ...state,
       ownership: { ...state.ownership, 1: "A" },
-      loans: [{ tileId: 1, playerId: "A", kind: "property" as const, principal: 64_000, roundsElapsed: 1 }],
+      loans: [{ tileId: 1, playerId: "A", kind: "property" as const, principal: 64_000, owed: 80_000, roundsElapsed: 1 }],
     };
 
     const { state: next } = reduce(state, { type: "REPAY_LOAN", tileId: 1 }, config);
 
     expect(next.loans).toEqual([]);
-    expect(next.players[0]?.cash).toBe(500_000 - 64_000);
+    expect(next.players[0]?.cash).toBe(500_000 - 80_000);
   });
 
   it("REPAY_LOAN no-ops without enough cash or for someone else's loan", () => {
@@ -722,7 +722,7 @@ describe("loans", () => {
     state = {
       ...state,
       ownership: { ...state.ownership, 1: "A" },
-      loans: [{ tileId: 1, playerId: "A", kind: "property" as const, principal: 64_000, roundsElapsed: 1 }],
+      loans: [{ tileId: 1, playerId: "A", kind: "property" as const, principal: 64_000, owed: 80_000, roundsElapsed: 1 }],
       players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 10_000 } : p)),
     };
 
@@ -731,7 +731,7 @@ describe("loans", () => {
 
     let stateB = {
       ...state,
-      loans: [{ tileId: 1, playerId: "B", kind: "property" as const, principal: 64_000, roundsElapsed: 1 }],
+      loans: [{ tileId: 1, playerId: "B", kind: "property" as const, principal: 64_000, owed: 80_000, roundsElapsed: 1 }],
       players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 500_000 } : p)),
     };
     const { state: wrongOwnerResult } = reduce(stateB, { type: "REPAY_LOAN", tileId: 1 }, config);
@@ -743,7 +743,7 @@ describe("loans", () => {
     state = {
       ...state,
       ownership: { ...state.ownership, 1: "A" },
-      loans: [{ tileId: 1, playerId: "A", kind: "property" as const, principal: 64_000, roundsElapsed: 0 }],
+      loans: [{ tileId: 1, playerId: "A", kind: "property" as const, principal: 64_000, owed: 80_000, roundsElapsed: 0 }],
     };
 
     ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
@@ -770,7 +770,7 @@ describe("loans", () => {
     state = {
       ...state,
       ownership: { ...state.ownership, 1: "A" },
-      loans: [{ tileId: 1, playerId: "A", kind: "property" as const, principal: 64_000, roundsElapsed: 1 }],
+      loans: [{ tileId: 1, playerId: "A", kind: "property" as const, principal: 64_000, owed: 80_000, roundsElapsed: 1 }],
     };
 
     ({ state } = reduce(state, { type: "REPAY_LOAN", tileId: 1 }, config));

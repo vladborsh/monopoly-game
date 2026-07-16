@@ -613,7 +613,7 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
       let next = withPlayer(state, player.id, (p) => ({ ...p, cash: p.cash + principal }));
       next = {
         ...next,
-        loans: [...next.loans, { tileId: tile.id, playerId: player.id, kind: action.kind, principal, roundsElapsed: 0 }],
+        loans: [...next.loans, { tileId: tile.id, playerId: player.id, kind: action.kind, principal, owed: value, roundsElapsed: 0 }],
       };
       events.push({ type: "LoanTaken", playerId: player.id, tileId: tile.id, kind: action.kind, principal });
 
@@ -629,10 +629,10 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
       if (state.turnPhase !== "awaiting_roll" && state.turnPhase !== "turn_over") return { state, events };
       const loan = state.loans.find((l) => l.tileId === action.tileId && l.playerId === player.id);
       if (!loan) return { state, events };
-      if (player.cash < loan.principal) return { state, events };
-      let next = withPlayer(state, player.id, (p) => ({ ...p, cash: p.cash - loan.principal }));
+      if (player.cash < loan.owed) return { state, events };
+      let next = withPlayer(state, player.id, (p) => ({ ...p, cash: p.cash - loan.owed }));
       next = { ...next, loans: next.loans.filter((l) => l !== loan) };
-      events.push({ type: "LoanRepaid", playerId: player.id, tileId: loan.tileId, kind: loan.kind, principal: loan.principal });
+      events.push({ type: "LoanRepaid", playerId: player.id, tileId: loan.tileId, kind: loan.kind, amount: loan.owed });
       return { state: next, events };
     }
 
