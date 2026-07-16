@@ -6,6 +6,7 @@ const RENT_PER_HOUSE = [25_000, 40_000, 55_000, 70_000, 85_000, 100_000, 125_000
 
 export const MAX_HOUSES = 3;
 export const PROPERTY_TAX_SURCHARGE_PER_HOUSE = 25_000;
+export const HOUSE_COST_ESCALATION_RATE = 1.2;
 
 function tierIndex(colorGroup: string): number {
   const index = GROUP_TIER_ORDER.indexOf(colorGroup);
@@ -14,6 +15,11 @@ function tierIndex(colorGroup: string): number {
 
 export function houseCostForGroup(colorGroup: string): number {
   return HOUSE_COST[tierIndex(colorGroup)] ?? 0;
+}
+
+/** Cost of the next house on a tile, given how many houses are already built there (0-indexed). */
+export function houseCostForBuild(colorGroup: string, currentHouses: number): number {
+  return Math.round(houseCostForGroup(colorGroup) * Math.pow(HOUSE_COST_ESCALATION_RATE, currentHouses));
 }
 
 export function rentPerHouseForGroup(colorGroup: string): number {

@@ -9,6 +9,9 @@ export const CHANCE_CARDS: Card[] = [
   { id: "chance-repairs", deck: "chance", text: "Заплатіть кожному гравцю 30 000.", effect: { kind: "pay_each_player", amount: 30_000 } },
   { id: "chance-birthday", deck: "chance", text: "У вас день народження! Кожен гравець платить вам 20 000.", effect: { kind: "receive_each_player", amount: 20_000 } },
   { id: "chance-forward3", deck: "chance", text: "Просуньтесь вперед на 3 клітинки.", effect: { kind: "move_relative", steps: 3 } },
+  { id: "chance-bonus", deck: "chance", text: "Ви отримали бонус від банку. Отримайте 70 000.", effect: { kind: "receive_bank", amount: 70_000 } },
+  { id: "chance-investment", deck: "chance", text: "Ваші інвестиції принесли прибуток. Отримайте 60 000.", effect: { kind: "receive_bank", amount: 60_000 } },
+  { id: "chance-holiday", deck: "chance", text: "Свято! Кожен гравець дарує вам 15 000.", effect: { kind: "receive_each_player", amount: 15_000 } },
 ];
 
 export const TREASURY_CARDS: Card[] = [

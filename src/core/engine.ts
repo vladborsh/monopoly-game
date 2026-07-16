@@ -7,10 +7,17 @@ import type { GameEvent } from "./events";
 import type { Card, CardEffect } from "./cards";
 import { rollDice, seedToFloat, nextSeed } from "./rng";
 import { shuffleDeck } from "./cards";
-import { calculateRent, ownsFullColorGroup, totalHousesOwned, BAIL_AMOUNT, MAX_JAIL_ATTEMPTS } from "./rules";
+import {
+  calculateRent,
+  ownsFullColorGroup,
+  totalHousesOwned,
+  buyoutAmountForTile,
+  BAIL_AMOUNT,
+  MAX_JAIL_ATTEMPTS,
+} from "./rules";
 import { spinCasino, MIN_CASINO_STAKE } from "./casino";
 import { isOwnable } from "./board";
-import { houseCostForGroup, MAX_HOUSES, PROPERTY_TAX_SURCHARGE_PER_HOUSE } from "./houses";
+import { houseCostForBuild, MAX_HOUSES, PROPERTY_TAX_SURCHARGE_PER_HOUSE } from "./houses";
 import { LOAN_DUE_ROUNDS, loanInterest, loanPrincipal } from "./loans";
 
 export interface GameConfig {
@@ -58,8 +65,12 @@ export function createInitialState(
 
   const ownership: Record<number, string | null> = {};
   const houses: Record<number, number> = {};
+  const buyoutCount: Record<number, number> = {};
   for (const tile of config.board) {
-    if (isOwnable(tile)) ownership[tile.id] = null;
+    if (isOwnable(tile)) {
+      ownership[tile.id] = null;
+      buyoutCount[tile.id] = 0;
+    }
     if (tile.type === "property") houses[tile.id] = 0;
   }
 
@@ -68,6 +79,7 @@ export function createInitialState(
     currentPlayerIndex: 0,
     ownership,
     houses,
+    buyoutCount,
     pendingOffer: null,
     loans: [],
     pendingDebt: null,
@@ -113,17 +125,20 @@ function bankruptPlayer(
   let next = withPlayer(state, playerId, (p) => ({ ...p, cash: 0, bankrupt: true }));
   const releasedOwnership = { ...next.ownership };
   const releasedHouses = { ...next.houses };
+  const releasedBuyoutCount = { ...next.buyoutCount };
   for (const tileId of Object.keys(releasedOwnership)) {
     const idNum = Number(tileId);
     if (releasedOwnership[idNum] === playerId) {
       releasedOwnership[idNum] = null;
       releasedHouses[idNum] = 0;
+      releasedBuyoutCount[idNum] = 0;
     }
   }
   next = {
     ...next,
     ownership: releasedOwnership,
     houses: releasedHouses,
+    buyoutCount: releasedBuyoutCount,
     loans: next.loans.filter((l) => l.playerId !== playerId),
   };
   events.push({ type: "PlayerBankrupt", playerId, creditorId });
@@ -478,7 +493,7 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
       if (!isOwnable(tile)) return { state, events };
       const ownerId = state.ownership[tile.id];
       if (!ownerId) return { state, events };
-      const amount = Math.round(tile.price * 1.2);
+      const amount = buyoutAmountForTile(tile.price, state.buyoutCount[tile.id] ?? 0);
       if (player.cash < amount) return { state, events };
       events.push({ type: "BuyoutOffered", tileId: tile.id, buyerId: player.id, ownerId, amount });
       return {
@@ -499,7 +514,11 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
       next = { ...next, pendingOffer: null };
       const buyer = next.players.find((p) => p.id === offer.buyerId);
       if (buyer && !buyer.bankrupt) {
-        next = { ...next, ownership: { ...next.ownership, [offer.tileId]: offer.buyerId } };
+        next = {
+          ...next,
+          ownership: { ...next.ownership, [offer.tileId]: offer.buyerId },
+          buyoutCount: { ...next.buyoutCount, [offer.tileId]: (next.buyoutCount[offer.tileId] ?? 0) + 1 },
+        };
       }
       events.push({
         type: "BuyoutAccepted",
@@ -582,7 +601,7 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
       if (!ownsFullColorGroup(tile, state.ownership, player.id, config.board)) return { state, events };
       const currentHouses = state.houses[tile.id] ?? 0;
       if (currentHouses >= MAX_HOUSES) return { state, events };
-      const cost = houseCostForGroup(tile.colorGroup);
+      const cost = houseCostForBuild(tile.colorGroup, currentHouses);
       if (player.cash < cost) return { state, events };
       let next = withPlayer(state, player.id, (p) => ({ ...p, cash: p.cash - cost }));
       next = { ...next, houses: { ...next.houses, [tile.id]: currentHouses + 1 } };
@@ -604,7 +623,7 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
         if (tile.type !== "property") return { state, events };
         const houseCount = state.houses[tile.id] ?? 0;
         if (houseCount <= 0) return { state, events };
-        value = houseCostForGroup(tile.colorGroup);
+        value = houseCostForBuild(tile.colorGroup, houseCount - 1);
       } else {
         value = tile.price;
       }

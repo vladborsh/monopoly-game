@@ -4,6 +4,13 @@ import { rentPerHouseForGroup } from "./houses";
 
 export const BAIL_AMOUNT = 50_000;
 export const MAX_JAIL_ATTEMPTS = 3;
+export const BUYOUT_BASE_MULTIPLIER = 1.2;
+export const BUYOUT_ESCALATION_RATE = 1.1;
+
+/** Buyout price for a tile, given how many buyouts have already completed on it. */
+export function buyoutAmountForTile(price: number, buyoutCount: number): number {
+  return Math.round(price * BUYOUT_BASE_MULTIPLIER * Math.pow(BUYOUT_ESCALATION_RATE, buyoutCount));
+}
 
 export function ownsFullColorGroup(
   tile: PropertyTile,

@@ -4,8 +4,8 @@ import type { GameState } from "../core/state";
 import type { GameEvent } from "../core/events";
 import type { LogLine, LogSegment } from "../core/log";
 import type { PlayerColorMap } from "../render/boardRenderer";
-import { ownsFullColorGroup, calculateRent } from "../core/rules";
-import { houseCostForGroup, MAX_HOUSES } from "../core/houses";
+import { ownsFullColorGroup, calculateRent, buyoutAmountForTile } from "../core/rules";
+import { houseCostForBuild, MAX_HOUSES } from "../core/houses";
 import { getPledgeableOptions } from "../core/loans";
 import { DEFAULT_STARTING_CASH } from "../core/engine";
 import { MIN_CASINO_STAKE } from "../core/casino";
@@ -307,7 +307,7 @@ export class GameUI {
         const ownerId = tile ? state.ownership[tile.id] : null;
         if (tile && isOwnable(tile) && ownerId) {
           const rent = calculateRent(tile, state.ownership, ownerId, board, state.houses);
-          const buyoutAmount = Math.round(tile.price * 1.2);
+          const buyoutAmount = buyoutAmountForTile(tile.price, state.buyoutCount[tile.id] ?? 0);
           this.actionsEl.appendChild(this.button(`Pay rent (${formatMoney(rent)})`, "pay-rent"));
           this.actionsEl.appendChild(
             this.button(`Offer buyout (${formatMoney(buyoutAmount)})`, "offer-buyout", player.cash < buyoutAmount),
@@ -415,7 +415,7 @@ export class GameUI {
     );
     for (const tile of buildable) {
       const houses = state.houses[tile.id] ?? 0;
-      const cost = houseCostForGroup(tile.colorGroup);
+      const cost = houseCostForBuild(tile.colorGroup, houses);
       const btn = document.createElement("button");
       btn.textContent = `Побудувати будинок: ${tile.name} (${houses}/${MAX_HOUSES}) — ${formatMoney(cost)}`;
       btn.disabled = player.cash < cost;

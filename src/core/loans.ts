@@ -1,6 +1,6 @@
 import type { Tile } from "./board";
 import { isOwnable } from "./board";
-import { houseCostForGroup } from "./houses";
+import { houseCostForBuild } from "./houses";
 
 export const LOAN_TO_VALUE_RATIO = 0.8;
 export const LOAN_INTEREST_RATE = 0.1;
@@ -52,7 +52,8 @@ export function getPledgeableOptions(
       principal: loanPrincipal(tile.price),
     });
     if (tile.type === "property" && (houses[tile.id] ?? 0) > 0) {
-      const value = houseCostForGroup(tile.colorGroup);
+      const houseCount = houses[tile.id] ?? 0;
+      const value = houseCostForBuild(tile.colorGroup, houseCount - 1);
       options.push({ tileId: tile.id, tileName: tile.name, kind: "house", value, principal: loanPrincipal(value) });
     }
   }

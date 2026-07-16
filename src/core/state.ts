@@ -42,6 +42,8 @@ export interface GameState {
   ownership: Record<number, string | null>;
   /** tileId -> house count (0-3), only meaningful for property tiles */
   houses: Record<number, number>;
+  /** tileId -> number of completed buyouts on that tile (drives escalating buyout price) */
+  buyoutCount: Record<number, number>;
   pendingOffer: PendingOffer | null;
   loans: Loan[];
   pendingDebt: PendingDebt | null;

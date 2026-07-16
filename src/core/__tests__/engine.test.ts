@@ -130,6 +130,25 @@ describe("rent", () => {
     expect(state.ownership[1]).toBeNull();
     expect(state.houses[1]).toBe(0);
   });
+
+  it("resets buyoutCount on properties released by a bankrupt player", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 3: "B", 1: "A" },
+      buyoutCount: { ...state.buyoutCount, 1: 2 },
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 1_000 } : p)),
+    };
+
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    ({ state } = reduce(state, { type: "PAY_RENT" }, config));
+    expect(state.turnPhase).toBe("awaiting_loan_decision");
+    ({ state } = reduce(state, { type: "DECLARE_BANKRUPTCY" }, config));
+
+    expect(state.players[0]?.bankrupt).toBe(true);
+    expect(state.buyoutCount[1]).toBe(0);
+  });
 });
 
 describe("rent-or-buyout choice", () => {
@@ -187,6 +206,40 @@ describe("rent-or-buyout choice", () => {
     expect(state.players[1]?.cash).toBe(500_000 + amount);
     expect(state.pendingOffer).toBeNull();
     expect(state.turnPhase).toBe("turn_over");
+  });
+
+  it("escalates the buyout price by 10% for each prior accepted buyout on the same tile", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = { ...state, ownership: { ...state.ownership, 3: "B" }, buyoutCount: { ...state.buyoutCount, 3: 1 } };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+
+    ({ state } = reduce(state, { type: "OFFER_BUYOUT" }, config));
+
+    expect(state.pendingOffer?.amount).toBe(Math.round(80_000 * 1.2 * 1.1));
+  });
+
+  it("ACCEPT_BUYOUT increments buyoutCount regardless of the new owner", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = { ...state, ownership: { ...state.ownership, 3: "B" } };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    ({ state } = reduce(state, { type: "OFFER_BUYOUT" }, config));
+    ({ state } = reduce(state, { type: "ACCEPT_BUYOUT", playerId: "B" }, config));
+
+    expect(state.buyoutCount[3]).toBe(1);
+    expect(state.ownership[3]).toBe("A");
+  });
+
+  it("does not increment buyoutCount when the buyer can't afford the offer or the owner rejects", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = { ...state, ownership: { ...state.ownership, 3: "B" } };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    ({ state } = reduce(state, { type: "OFFER_BUYOUT" }, config));
+    ({ state } = reduce(state, { type: "REJECT_BUYOUT", playerId: "B" }, config));
+
+    expect(state.buyoutCount[3]).toBe(0);
   });
 
   it("ignores ACCEPT_BUYOUT/REJECT_BUYOUT from a player other than the offer's owner", () => {
@@ -506,6 +559,38 @@ describe("building houses", () => {
     expect(next.players[0]?.cash).toBe(10_000);
   });
 
+  it("charges 20% more for each subsequent house on the same tile", () => {
+    let state = createInitialState(players(), config, 1);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 1: "A", 3: "A" },
+      houses: { ...state.houses, 1: 1 },
+    };
+
+    const { state: afterSecond } = reduce(state, { type: "BUILD_HOUSE", tileId: 1 }, config);
+    expect(afterSecond.houses[1]).toBe(2);
+    expect(afterSecond.players[0]?.cash).toBe(500_000 - 60_000); // 50_000 * 1.2
+
+    const { state: afterThird } = reduce(afterSecond, { type: "BUILD_HOUSE", tileId: 1 }, config);
+    expect(afterThird.houses[1]).toBe(3);
+    expect(afterThird.players[0]?.cash).toBe(500_000 - 60_000 - 72_000); // 50_000 * 1.2^2
+  });
+
+  it("blocks building a subsequent house if the player can't afford the escalated cost", () => {
+    let state = createInitialState(players(), config, 1);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 1: "A", 3: "A" },
+      houses: { ...state.houses, 1: 1 },
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 55_000 } : p)), // covers base 50_000, not 60_000
+    };
+
+    const { state: next } = reduce(state, { type: "BUILD_HOUSE", tileId: 1 }, config);
+
+    expect(next.houses[1]).toBe(1);
+    expect(next.players[0]?.cash).toBe(55_000);
+  });
+
   it("is rejected outside awaiting_roll/turn_over phases", () => {
     let state = createInitialState(players(), config, 1);
     state = {
@@ -619,8 +704,8 @@ describe("loans", () => {
 
     ({ state } = reduce(state, { type: "TAKE_LOAN", tileId: 1, kind: "house" }, config));
 
-    // tile 1 is in the "gold" group, house cost 50_000 -> principal 40_000, owed 50_000
-    expect(state.loans).toEqual([{ tileId: 1, playerId: "A", kind: "house", principal: 40_000, owed: 50_000, roundsElapsed: 0 }]);
+    // tile 1 has 2 houses; pledge values the most recently built (index 1): 50_000 * 1.2 = 60_000 -> principal 48_000
+    expect(state.loans).toEqual([{ tileId: 1, playerId: "A", kind: "house", principal: 48_000, owed: 60_000, roundsElapsed: 0 }]);
     expect(state.ownership[1]).toBe("A");
     expect(state.houses[1]).toBe(2);
     expect(state.turnPhase).toBe("turn_over");
