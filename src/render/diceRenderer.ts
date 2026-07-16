@@ -3,7 +3,7 @@ import { BOARD_PX } from "./layout";
 /** Reserved space on the board for the dice, per spec: 200x300, centered. */
 export const DICE_ZONE = {
   x: BOARD_PX / 2 - 100,
-  y: BOARD_PX / 2 - 40,
+  y: BOARD_PX / 2 - 150,
   w: 200,
   h: 300,
 };

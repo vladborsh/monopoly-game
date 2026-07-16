@@ -6,7 +6,8 @@ import { LocalTransport, type Transport } from "../net/transport";
 import { drawBoard, type PlayerColorMap } from "../render/boardRenderer";
 import { drawTokens } from "../render/tokenRenderer";
 import { drawDice } from "../render/diceRenderer";
-import { animateTokenMove, animateDiceRoll } from "../render/animations";
+import { drawCasinoReels, resultSymbolsForMultiplier } from "../render/casinoRenderer";
+import { animateTokenMove, animateDiceRoll, animateCasinoSpin } from "../render/animations";
 import { describeEvent, type GameUI, type RestartConfigDetail } from "../ui/ui";
 import { clearSavedGame, loadGame, saveGame } from "./persistence";
 
@@ -99,6 +100,12 @@ export class GameController {
           displayDice = event.dice;
           continue;
         }
+        if (event.type === "CasinoResult") {
+          await animateCasinoSpin(resultSymbolsForMultiplier(event.multiplier), (symbols) => {
+            this.renderBoard(displayState, {}, displayDice, [0, 0], symbols);
+          });
+          continue;
+        }
         if (event.type !== "PlayerMoved") continue;
         await animateTokenMove(event.from, event.to, BOARD_SIZE, (pos) => {
           this.renderBoard(displayState, pos ? { [event.playerId]: pos } : {}, displayDice);
@@ -131,14 +138,21 @@ export class GameController {
     tokenOverrides: Record<string, { x: number; y: number }> = {},
     diceValues: [number, number] | null = state.lastDice,
     diceRotations: [number, number] = [0, 0],
+    casinoSymbols: [string, string, string] | null = null,
   ): void {
     drawBoard(this.ctx, this.config.board, state, this.playerColors);
     drawTokens(this.ctx, state, this.playerColors, tokenOverrides);
     drawDice(this.ctx, diceValues, diceRotations);
+    drawCasinoReels(this.ctx, casinoSymbols);
+  }
+
+  private idleCasinoSymbols(state: GameState): [string, string, string] | null {
+    if (state.turnPhase === "awaiting_casino_spin") return ["❔", "❔", "❔"];
+    return state.lastCasinoResult ? resultSymbolsForMultiplier(state.lastCasinoResult.multiplier) : null;
   }
 
   private render(state: GameState = this.state): void {
-    this.renderBoard(state);
+    this.renderBoard(state, {}, state.lastDice, [0, 0], this.idleCasinoSymbols(state));
     this.ui.renderPlayers(state, this.playerColors);
     this.ui.renderActions(state, this.config.board);
     this.ui.setLog(state.log, this.playerColors);

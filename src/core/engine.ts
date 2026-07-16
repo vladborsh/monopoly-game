@@ -1,6 +1,6 @@
 import type { Tile } from "./board";
 import { BOARD_SIZE, SALARY } from "./board";
-import type { GameState, Player } from "./state";
+import type { GameState, Player, TurnPhase } from "./state";
 import { currentPlayer } from "./state";
 import type { Action } from "./actions";
 import type { GameEvent } from "./events";
@@ -8,9 +8,10 @@ import type { Card, CardEffect } from "./cards";
 import { rollDice, seedToFloat, nextSeed } from "./rng";
 import { shuffleDeck } from "./cards";
 import { calculateRent, ownsFullColorGroup, totalHousesOwned, BAIL_AMOUNT, MAX_JAIL_ATTEMPTS } from "./rules";
-import { spinCasino, CASINO_STAKE } from "./casino";
+import { spinCasino, MIN_CASINO_STAKE } from "./casino";
 import { isOwnable } from "./board";
 import { houseCostForGroup, MAX_HOUSES, PROPERTY_TAX_SURCHARGE_PER_HOUSE } from "./houses";
+import { LOAN_DUE_ROUNDS, loanInterest, loanPrincipal } from "./loans";
 
 export interface GameConfig {
   board: Tile[];
@@ -68,12 +69,15 @@ export function createInitialState(
     ownership,
     houses,
     pendingOffer: null,
+    loans: [],
+    pendingDebt: null,
     chanceOrder: shuffleDeck(config.chanceCards.map((c) => c.id), chanceFloats),
     chanceIndex: 0,
     treasuryOrder: shuffleDeck(config.treasuryCards.map((c) => c.id), treasuryFloats),
     treasuryIndex: 0,
     turnPhase: "awaiting_roll",
     lastDice: null,
+    lastCasinoResult: null,
     jackpot: STARTING_JACKPOT,
     rngSeed: seed,
     winnerId: null,
@@ -94,30 +98,60 @@ function withPlayer(state: GameState, playerId: string, update: (p: Player) => P
   };
 }
 
+function hasAvailableCollateral(state: GameState, playerId: string): boolean {
+  return Object.entries(state.ownership).some(
+    ([tileId, ownerId]) => ownerId === playerId && !state.loans.some((l) => l.tileId === Number(tileId)),
+  );
+}
+
+function bankruptPlayer(
+  state: GameState,
+  events: GameEvent[],
+  playerId: string,
+  creditorId: string | null,
+): GameState {
+  let next = withPlayer(state, playerId, (p) => ({ ...p, cash: 0, bankrupt: true }));
+  const releasedOwnership = { ...next.ownership };
+  const releasedHouses = { ...next.houses };
+  for (const tileId of Object.keys(releasedOwnership)) {
+    const idNum = Number(tileId);
+    if (releasedOwnership[idNum] === playerId) {
+      releasedOwnership[idNum] = null;
+      releasedHouses[idNum] = 0;
+    }
+  }
+  next = {
+    ...next,
+    ownership: releasedOwnership,
+    houses: releasedHouses,
+    loans: next.loans.filter((l) => l.playerId !== playerId),
+  };
+  events.push({ type: "PlayerBankrupt", playerId, creditorId });
+  return next;
+}
+
+function settlePhaseAfterCharge(state: GameState, fallbackPhase: TurnPhase): GameState {
+  if (state.turnPhase === "awaiting_loan_decision") return state;
+  return { ...state, turnPhase: fallbackPhase };
+}
+
 function chargeCash(
   state: GameState,
   events: GameEvent[],
   payerId: string,
   amount: number,
   creditorId: string | null,
+  allowLoan = false,
 ): GameState {
   const payer = state.players.find((p) => p.id === payerId);
   if (!payer) return state;
   const remaining = payer.cash - amount;
   if (remaining < 0) {
-    let next = withPlayer(state, payerId, (p) => ({ ...p, cash: 0, bankrupt: true }));
-    const releasedOwnership = { ...next.ownership };
-    const releasedHouses = { ...next.houses };
-    for (const tileId of Object.keys(releasedOwnership)) {
-      const idNum = Number(tileId);
-      if (releasedOwnership[idNum] === payerId) {
-        releasedOwnership[idNum] = null;
-        releasedHouses[idNum] = 0;
-      }
+    if (allowLoan && hasAvailableCollateral(state, payerId)) {
+      events.push({ type: "LoanRequired", playerId: payerId, creditorId, amount });
+      return { ...state, turnPhase: "awaiting_loan_decision", pendingDebt: { payerId, creditorId, amount } };
     }
-    next = { ...next, ownership: releasedOwnership, houses: releasedHouses };
-    events.push({ type: "PlayerBankrupt", playerId: payerId, creditorId });
-    return next;
+    return bankruptPlayer(state, events, payerId, creditorId);
   }
   let next = withPlayer(state, payerId, (p) => ({ ...p, cash: remaining }));
   if (creditorId) {
@@ -144,8 +178,8 @@ function receiveFromAllOthers(state: GameState, events: GameEvent[], toId: strin
   return next;
 }
 
-function payBank(state: GameState, events: GameEvent[], playerId: string, amount: number): GameState {
-  return chargeCash(state, events, playerId, amount, null);
+function payBank(state: GameState, events: GameEvent[], playerId: string, amount: number, allowLoan = false): GameState {
+  return chargeCash(state, events, playerId, amount, null, allowLoan);
 }
 
 function receiveFromBank(state: GameState, playerId: string, amount: number): GameState {
@@ -251,9 +285,11 @@ function resolveLanding(state: GameState, events: GameEvent[], config: GameConfi
       const surcharge =
         tile.id === 30 ? totalHousesOwned(playerId, state.ownership, state.houses) * PROPERTY_TAX_SURCHARGE_PER_HOUSE : 0;
       const amount = tile.amount + surcharge;
-      const next = payBank(state, events, playerId, amount);
-      events.push({ type: "TaxCharged", playerId, amount });
-      return { ...next, turnPhase: "turn_over" };
+      const next = payBank(state, events, playerId, amount, true);
+      if (next.turnPhase !== "awaiting_loan_decision") {
+        events.push({ type: "TaxCharged", playerId, amount });
+      }
+      return settlePhaseAfterCharge(next, "turn_over");
     }
 
     case "chance":
@@ -278,9 +314,11 @@ function resolveLanding(state: GameState, events: GameEvent[], config: GameConfi
       const houseCount = tile.type === "property" ? (state.houses[tile.id] ?? 0) : 0;
       if (houseCount > 0) {
         const rent = calculateRent(tile, state.ownership, ownerId, config.board, state.houses);
-        const next = chargeCash(state, events, playerId, rent, ownerId);
-        events.push({ type: "RentCharged", payerId: playerId, ownerId, amount: rent });
-        return { ...next, turnPhase: "turn_over" };
+        const next = chargeCash(state, events, playerId, rent, ownerId, true);
+        if (next.turnPhase !== "awaiting_loan_decision") {
+          events.push({ type: "RentCharged", payerId: playerId, ownerId, amount: rent });
+        }
+        return settlePhaseAfterCharge(next, "turn_over");
       }
       return { ...state, turnPhase: "awaiting_rent_or_buyout_choice" };
     }
@@ -317,9 +355,43 @@ function advanceToNextPlayer(state: GameState): { state: GameState; events: Game
   if (!nextPlayer) return { state, events };
   events.push({ type: "TurnEnded", nextPlayerId: nextPlayer.id });
   return {
-    state: { ...state, currentPlayerIndex: nextIndex, turnPhase: "awaiting_roll" },
+    state: { ...state, currentPlayerIndex: nextIndex, turnPhase: "awaiting_roll", lastCasinoResult: null },
     events,
   };
+}
+
+function applyLoanRoundStart(state: GameState, events: GameEvent[], playerId: string): GameState {
+  let next = state;
+  for (const loan of state.loans.filter((l) => l.playerId === playerId)) {
+    const debtor = next.players.find((p) => p.id === playerId);
+    const interest = loanInterest(loan.principal);
+    const paid = Math.min(debtor?.cash ?? 0, interest);
+    if (paid > 0) {
+      next = withPlayer(next, playerId, (p) => ({ ...p, cash: p.cash - paid }));
+    }
+    events.push({ type: "LoanInterestCharged", playerId, tileId: loan.tileId, amount: paid });
+
+    const roundsElapsed = loan.roundsElapsed + 1;
+    if (roundsElapsed >= LOAN_DUE_ROUNDS) {
+      if (loan.kind === "property") {
+        next = {
+          ...next,
+          ownership: { ...next.ownership, [loan.tileId]: null },
+          houses: { ...next.houses, [loan.tileId]: 0 },
+        };
+      } else {
+        next = {
+          ...next,
+          houses: { ...next.houses, [loan.tileId]: Math.max(0, (next.houses[loan.tileId] ?? 0) - 1) },
+        };
+      }
+      next = { ...next, loans: next.loans.filter((l) => l !== loan) };
+      events.push({ type: "LoanCollateralSeized", playerId, tileId: loan.tileId, kind: loan.kind });
+    } else {
+      next = { ...next, loans: next.loans.map((l) => (l === loan ? { ...l, roundsElapsed } : l)) };
+    }
+  }
+  return next;
 }
 
 export function reduce(state: GameState, action: Action, config: GameConfig): ReduceResult {
@@ -330,10 +402,11 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
     case "ROLL_DICE": {
       if (state.turnPhase !== "awaiting_roll") return { state, events };
 
-      const { dice, nextSeed: seedAfterRoll } = rollDice(state.rngSeed);
+      const afterInterest = applyLoanRoundStart(state, events, player.id);
+      const { dice, nextSeed: seedAfterRoll } = rollDice(afterInterest.rngSeed);
       const isDouble = dice[0] === dice[1];
       events.push({ type: "DiceRolled", playerId: player.id, dice, isDouble });
-      let next: GameState = { ...state, rngSeed: seedAfterRoll, lastDice: dice };
+      let next: GameState = { ...afterInterest, rngSeed: seedAfterRoll, lastDice: dice };
 
       if (player.inJail) {
         if (isDouble) {
@@ -392,9 +465,11 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
       const ownerId = state.ownership[tile.id];
       if (!ownerId) return { state, events };
       const rent = calculateRent(tile, state.ownership, ownerId, config.board, state.houses);
-      const next = chargeCash(state, events, player.id, rent, ownerId);
-      events.push({ type: "RentCharged", payerId: player.id, ownerId, amount: rent });
-      return { state: { ...next, turnPhase: "turn_over" }, events };
+      const next = chargeCash(state, events, player.id, rent, ownerId, true);
+      if (next.turnPhase !== "awaiting_loan_decision") {
+        events.push({ type: "RentCharged", payerId: player.id, ownerId, amount: rent });
+      }
+      return { state: settlePhaseAfterCharge(next, "turn_over"), events };
     }
 
     case "OFFER_BUYOUT": {
@@ -404,6 +479,7 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
       const ownerId = state.ownership[tile.id];
       if (!ownerId) return { state, events };
       const amount = Math.round(tile.price * 1.2);
+      if (player.cash < amount) return { state, events };
       events.push({ type: "BuyoutOffered", tileId: tile.id, buyerId: player.id, ownerId, amount });
       return {
         state: {
@@ -448,22 +524,25 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
       });
       const tile = findTile(config.board, offer.tileId);
       const rent = calculateRent(tile, state.ownership, offer.ownerId, config.board, state.houses);
-      let next = chargeCash(state, events, offer.buyerId, rent, offer.ownerId);
+      let next = chargeCash(state, events, offer.buyerId, rent, offer.ownerId, true);
       next = { ...next, pendingOffer: null };
-      events.push({ type: "RentCharged", payerId: offer.buyerId, ownerId: offer.ownerId, amount: rent });
-      return { state: { ...next, turnPhase: "turn_over" }, events };
+      if (next.turnPhase !== "awaiting_loan_decision") {
+        events.push({ type: "RentCharged", payerId: offer.buyerId, ownerId: offer.ownerId, amount: rent });
+      }
+      return { state: settlePhaseAfterCharge(next, "turn_over"), events };
     }
 
     case "PLAY_CASINO": {
       if (state.turnPhase !== "awaiting_casino_spin") return { state, events };
+      const stake = Math.min(Math.max(action.stake, MIN_CASINO_STAKE), player.cash);
       const { multiplier, nextSeed: seedAfter } = spinCasino(state.rngSeed);
-      const amount = multiplier * CASINO_STAKE;
-      let next = payBank(state, events, player.id, CASINO_STAKE);
+      const amount = multiplier * stake;
+      let next = payBank(state, events, player.id, stake);
       if (multiplier > 0) {
         next = receiveFromBank(next, player.id, amount);
       }
-      events.push({ type: "CasinoResult", playerId: player.id, multiplier, amount });
-      next = { ...next, rngSeed: seedAfter, turnPhase: "turn_over" };
+      events.push({ type: "CasinoResult", playerId: player.id, multiplier, amount, stake });
+      next = { ...next, rngSeed: seedAfter, turnPhase: "turn_over", lastCasinoResult: { multiplier, stake } };
       return { state: next, events };
     }
 
@@ -508,6 +587,61 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
       let next = withPlayer(state, player.id, (p) => ({ ...p, cash: p.cash - cost }));
       next = { ...next, houses: { ...next.houses, [tile.id]: currentHouses + 1 } };
       events.push({ type: "HouseBuilt", playerId: player.id, tileId: tile.id, houses: currentHouses + 1 });
+      return { state: next, events };
+    }
+
+    case "TAKE_LOAN": {
+      if (state.turnPhase !== "awaiting_loan_decision" || !state.pendingDebt) return { state, events };
+      const debt = state.pendingDebt;
+      if (debt.payerId !== player.id) return { state, events };
+      const tile = findTile(config.board, action.tileId);
+      if (!isOwnable(tile)) return { state, events };
+      if (state.ownership[tile.id] !== player.id) return { state, events };
+      if (state.loans.some((l) => l.tileId === tile.id)) return { state, events };
+
+      let value: number;
+      if (action.kind === "house") {
+        if (tile.type !== "property") return { state, events };
+        const houseCount = state.houses[tile.id] ?? 0;
+        if (houseCount <= 0) return { state, events };
+        value = houseCostForGroup(tile.colorGroup);
+      } else {
+        value = tile.price;
+      }
+      const principal = loanPrincipal(value);
+
+      let next = withPlayer(state, player.id, (p) => ({ ...p, cash: p.cash + principal }));
+      next = {
+        ...next,
+        loans: [...next.loans, { tileId: tile.id, playerId: player.id, kind: action.kind, principal, roundsElapsed: 0 }],
+      };
+      events.push({ type: "LoanTaken", playerId: player.id, tileId: tile.id, kind: action.kind, principal });
+
+      const debtor = next.players.find((p) => p.id === player.id)!;
+      if (debtor.cash >= debt.amount || !hasAvailableCollateral(next, player.id)) {
+        next = chargeCash(next, events, debt.payerId, debt.amount, debt.creditorId, false);
+        next = { ...next, pendingDebt: null, turnPhase: "turn_over" };
+      }
+      return { state: next, events };
+    }
+
+    case "REPAY_LOAN": {
+      if (state.turnPhase !== "awaiting_roll" && state.turnPhase !== "turn_over") return { state, events };
+      const loan = state.loans.find((l) => l.tileId === action.tileId && l.playerId === player.id);
+      if (!loan) return { state, events };
+      if (player.cash < loan.principal) return { state, events };
+      let next = withPlayer(state, player.id, (p) => ({ ...p, cash: p.cash - loan.principal }));
+      next = { ...next, loans: next.loans.filter((l) => l !== loan) };
+      events.push({ type: "LoanRepaid", playerId: player.id, tileId: loan.tileId, kind: loan.kind, principal: loan.principal });
+      return { state: next, events };
+    }
+
+    case "DECLARE_BANKRUPTCY": {
+      if (state.turnPhase !== "awaiting_loan_decision" || !state.pendingDebt) return { state, events };
+      const debt = state.pendingDebt;
+      if (debt.payerId !== player.id) return { state, events };
+      let next = bankruptPlayer(state, events, player.id, debt.creditorId);
+      next = { ...next, pendingDebt: null, turnPhase: "turn_over" };
       return { state: next, events };
     }
 

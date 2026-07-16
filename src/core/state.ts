@@ -1,4 +1,5 @@
 import type { LogLine } from "./log";
+import type { Loan } from "./loans";
 
 export type TurnPhase =
   | "awaiting_roll"
@@ -6,6 +7,7 @@ export type TurnPhase =
   | "awaiting_rent_or_buyout_choice"
   | "awaiting_buyout_response"
   | "awaiting_casino_spin"
+  | "awaiting_loan_decision"
   | "turn_over"
   | "game_over";
 
@@ -13,6 +15,12 @@ export interface PendingOffer {
   tileId: number;
   buyerId: string;
   ownerId: string;
+  amount: number;
+}
+
+export interface PendingDebt {
+  payerId: string;
+  creditorId: string | null;
   amount: number;
 }
 
@@ -35,12 +43,15 @@ export interface GameState {
   /** tileId -> house count (0-3), only meaningful for property tiles */
   houses: Record<number, number>;
   pendingOffer: PendingOffer | null;
+  loans: Loan[];
+  pendingDebt: PendingDebt | null;
   chanceOrder: string[];
   chanceIndex: number;
   treasuryOrder: string[];
   treasuryIndex: number;
   turnPhase: TurnPhase;
   lastDice: [number, number] | null;
+  lastCasinoResult: { multiplier: number; stake: number } | null;
   jackpot: number;
   rngSeed: number;
   winnerId: string | null;

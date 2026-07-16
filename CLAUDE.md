@@ -34,6 +34,7 @@ The `core/` engine is pure and side-effect-free — it never touches the DOM, ca
 - **engine.ts** — `reduce(state, action, config) -> { state, events }`. The single pure reducer. Deterministic given `rngSeed`. All money/ownership/position mutations happen here via small helpers (`chargeCash`, `moveTo`, `sendToJail`, `applyCardEffect`, `resolveLanding`, `advanceToNextPlayer`).
 - **rules.ts** — rent math (`calculateRent`, monopoly detection, company rent scaling, house count aggregation for the property-tax surcharge).
 - **houses.ts** — house cost/rent-per-house tables, keyed by color-group tier (`GROUP_TIER_ORDER`), plus `MAX_HOUSES` and the per-house tax surcharge.
+- **loans.ts** — bank-loan constants (`LOAN_TO_VALUE_RATIO`, `LOAN_INTEREST_RATE`, `LOAN_DUE_ROUNDS`), the `Loan` type, `loanPrincipal`/`loanInterest` math, and `getPledgeableOptions` (the selector the UI uses to list what a player can still pledge).
 - **casino.ts** — weighted-table casino spin (`spinCasino`), deterministic off the same seed chain.
 - **cards.ts** — `Card`/`CardEffect` types and a seeded Fisher-Yates `shuffleDeck`.
 - **rng.ts** — `mulberry32`-style pure PRNG. Same seed -> same sequence, always. `rngSeed` lives in `GameState` and advances on every roll/shuffle/casino spin, making replays and save/load fully deterministic.
@@ -52,10 +53,12 @@ awaiting_roll
   -> (land on chance/treasury)           -> card drawn & effect applied, may chain into another resolveLanding
   -> (land on tax/go/jail/free)          -> turn_over
   -> (in jail, roll)                     -> doubles: released & moves; 3rd failed attempt: forced payout & moves; else stays turn_over
+  -> (rent/tax charge would bankrupt payer, and they own a pledgeable asset)
+                                          -> awaiting_loan_decision -> TAKE_LOAN (repeatable) | DECLARE_BANKRUPTCY -> turn_over
 turn_over -> END_TURN -> awaiting_roll (next non-bankrupt player) | game_over (one player left)
 ```
 
-`BUILD_HOUSE` is allowed during `awaiting_roll` or `turn_over` (i.e. anytime it's your turn and you're not mid-decision), gated by owning the full color group and having cash.
+`BUILD_HOUSE` is allowed during `awaiting_roll` or `turn_over` (i.e. anytime it's your turn and you're not mid-decision), gated by owning the full color group and having cash. `REPAY_LOAN` is allowed in those same two phases.
 
 ### Key mechanics
 
@@ -64,7 +67,8 @@ turn_over -> END_TURN -> awaiting_roll (next non-bankrupt player) | game_over (o
 - **Buyout mechanic** (this game's twist on undeveloped-property rent): landing on an owned, house-free property doesn't auto-charge rent — the *landing player* chooses to `PAY_RENT` or `OFFER_BUYOUT` (120% of price). The *owner* then `ACCEPT_BUYOUT` or `REJECT_BUYOUT` (rejecting falls back to charging rent). Once houses are built on a property this choice disappears and rent is automatic.
 - **Jail**: 3 attempts to roll doubles; doubles release immediately and move; on the 3rd failed attempt bail is charged automatically and the player moves. `PAY_BAIL`/`USE_JAIL_CARD` are available anytime during `awaiting_roll` while jailed, to skip ahead of the roll.
 - **Property tax surcharge** (tile 30): base tax + `25_000` per house the *landing player* owns anywhere on the board (`totalHousesOwned`).
-- **Bankruptcy**: `chargeCash` zeroes the payer's cash, marks them `bankrupt`, and releases all their owned tiles/houses back to the bank when a charge would go negative. `advanceToNextPlayer` skips bankrupt players and ends the game once one remains.
+- **Bank loans** (avoids instant bankruptcy on rent/tax): `chargeCash` takes an `allowLoan` flag, set `true` only at the 4 call sites that commonly bankrupt players during normal play (`PAY_RENT`, the auto-rent-on-landing path, `REJECT_BUYOUT`'s rent fallback, and tax tiles — bail, casino stakes, and buyout purchases stay instant-bankrupt since those are voluntary/skippable). When such a charge would go negative and the payer still owns at least one un-pledged ownable tile, the charge is deferred instead of applied: `turnPhase` becomes `awaiting_loan_decision` and a `pendingDebt` (`payerId`/`creditorId`/`amount`) is stored. From there, `TAKE_LOAN` lets the player pledge a whole property/company tile or a single house on one (each tile backs at most one active loan) for `loanPrincipal(value)` = 80% of the tile's `price` (or the group's `houseCostForGroup` for a house); multiple loans can be taken in sequence in the same dialog until the debt is covered or collateral runs out, at which point it falls through to bankruptcy. `DECLARE_BANKRUPTCY` lets the player skip straight to bankruptcy even with collateral left. Every loan accrues `loanInterest(principal)` (10%) auto-deducted (best-effort, never itself bankrupts) at the start of each of the borrower's own `ROLL_DICE` turns; after `LOAN_DUE_ROUNDS` (3) unpaid turns the bank seizes the collateral (clears the tile's ownership, or decrements one house) and the debt is wiped regardless of the seized asset's value. `REPAY_LOAN` pays off a loan's principal early.
+- **Bankruptcy**: `bankruptPlayer` (shared by `chargeCash`'s fallback branch and `DECLARE_BANKRUPTCY`) zeroes the payer's cash, marks them `bankrupt`, releases all their owned tiles/houses back to the bank, and drops any of their active loans. `advanceToNextPlayer` skips bankrupt players and ends the game once one remains.
 - **Determinism**: dice, card shuffles, and casino spins all thread through `rngSeed` in `GameState` — replaying the same action sequence from the same seed reproduces the same game, which is what `engine.test.ts` relies on and what makes save/load safe.
 
 ### App/render layers

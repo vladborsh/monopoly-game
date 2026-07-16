@@ -1,8 +1,7 @@
 import type { Tile } from "../core/board";
 import { isOwnable } from "../core/board";
 import type { GameState } from "../core/state";
-import { getTileRect, BOARD_PX } from "./layout";
-import { DICE_ZONE } from "./diceRenderer";
+import { getTileRect, BOARD_PX, CORNER_PX } from "./layout";
 import { GROUP_COLORS, TILE_TYPE_COLORS } from "./colors";
 
 export interface PlayerColorMap {
@@ -91,7 +90,7 @@ export function drawBoard(
   ctx.font = "bold 28px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("МОНОПОЛІЯ", BOARD_PX / 2, DICE_ZONE.y - 25);
+  ctx.fillText("МОНОПОЛІЯ", BOARD_PX / 2, CORNER_PX + 45);
 
   ctx.restore();
 }

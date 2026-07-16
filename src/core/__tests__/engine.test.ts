@@ -122,6 +122,9 @@ describe("rent", () => {
 
     ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
     ({ state } = reduce(state, { type: "PAY_RENT" }, config));
+    // A still owns tile 1, so instead of instant bankruptcy the loan offer kicks in.
+    expect(state.turnPhase).toBe("awaiting_loan_decision");
+    ({ state } = reduce(state, { type: "DECLARE_BANKRUPTCY" }, config));
 
     expect(state.players[0]?.bankrupt).toBe(true);
     expect(state.ownership[1]).toBeNull();
@@ -242,7 +245,7 @@ describe("rent-or-buyout choice", () => {
     expect(state.turnPhase).toBe("awaiting_rent_or_buyout_choice");
   });
 
-  it("leaves the tile with the original owner if the buyer goes bankrupt paying the buyout", () => {
+  it("leaves the tile with the original owner if the buyer can't afford the buyout and must pay rent instead", () => {
     const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
     let state = createInitialState(players(), config, seed);
     state = {
@@ -251,14 +254,37 @@ describe("rent-or-buyout choice", () => {
       players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 1_000 } : p)),
     };
     ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
-    ({ state } = reduce(state, { type: "OFFER_BUYOUT" }, config));
 
-    ({ state } = reduce(state, { type: "ACCEPT_BUYOUT", playerId: "B" }, config));
+    // Too poor to afford the 96_000 buyout, so OFFER_BUYOUT is a no-op...
+    ({ state } = reduce(state, { type: "OFFER_BUYOUT" }, config));
+    expect(state.turnPhase).toBe("awaiting_rent_or_buyout_choice");
+    expect(state.pendingOffer).toBeNull();
+
+    // ...and the buyer falls back to paying rent (which they also can't cover, so they bankrupt via that path instead).
+    ({ state } = reduce(state, { type: "PAY_RENT" }, config));
 
     expect(state.ownership[3]).toBe("B");
     expect(state.players[0]?.bankrupt).toBe(true);
     expect(state.players[0]?.cash).toBe(0);
     expect(state.players[1]?.cash).toBe(500_000);
+  });
+
+  it("ignores OFFER_BUYOUT when the player cannot afford 120% of the tile price", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 3: "B" },
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 90_000 } : p)), // buyout needs 96_000
+    };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    const before = state;
+
+    ({ state } = reduce(state, { type: "OFFER_BUYOUT" }, config));
+
+    expect(state).toEqual(before);
+    expect(state.turnPhase).toBe("awaiting_rent_or_buyout_choice");
+    expect(state.pendingOffer).toBeNull();
   });
 
   it("rejects PAY_RENT/OFFER_BUYOUT/ACCEPT_BUYOUT/REJECT_BUYOUT from the wrong phase", () => {
@@ -398,10 +424,35 @@ describe("casino", () => {
     // sum 20 unreachable with 2 dice; instead drive position manually onto the casino tile (20)
     let state = createInitialState(players(), config, 7);
     state = { ...state, turnPhase: "awaiting_casino_spin" };
-    const { state: next, events } = reduce(state, { type: "PLAY_CASINO" }, config);
+    const { state: next, events } = reduce(state, { type: "PLAY_CASINO", stake: 10_000 }, config);
     const result = events.find((e) => e.type === "CasinoResult");
     expect(result).toBeDefined();
     expect(next.turnPhase).toBe("turn_over");
+  });
+
+  it("clamps the requested stake to the player's available cash", () => {
+    let state = createInitialState(players(), config, 7);
+    state = {
+      ...state,
+      turnPhase: "awaiting_casino_spin",
+      players: state.players.map((p, i) => (i === 0 ? { ...p, cash: 5_000 } : p)),
+    };
+    const { events } = reduce(state, { type: "PLAY_CASINO", stake: 1_000_000 }, config);
+    const result = events.find((e) => e.type === "CasinoResult");
+    expect(result?.type).toBe("CasinoResult");
+    if (result?.type === "CasinoResult") expect(result.stake).toBe(5_000);
+  });
+
+  it("clears lastCasinoResult once the turn ends, so the reels don't linger for later turns", () => {
+    let state = createInitialState(players(), config, 7);
+    state = { ...state, turnPhase: "awaiting_casino_spin" };
+    ({ state } = reduce(state, { type: "PLAY_CASINO", stake: 10_000 }, config));
+    expect(state.lastCasinoResult).not.toBeNull();
+    expect(state.turnPhase).toBe("turn_over");
+
+    ({ state } = reduce(state, { type: "END_TURN" }, config));
+    expect(state.lastCasinoResult).toBeNull();
+    expect(state.currentPlayerIndex).toBe(1);
   });
 });
 
@@ -494,6 +545,239 @@ describe("building houses", () => {
 
     // 8_000 base + 2 houses * 40_000/house = 88_000, not the 16_000 monopoly-multiplier rent
     expect(state.players[0]?.cash).toBe(500_000 - 88_000);
+  });
+});
+
+describe("loans", () => {
+  it("defers to a loan decision instead of bankrupting when the player owns another asset", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 3: "B", 1: "A" },
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 1_000 } : p)),
+    };
+
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    ({ state } = reduce(state, { type: "PAY_RENT" }, config));
+
+    expect(state.turnPhase).toBe("awaiting_loan_decision");
+    expect(state.pendingDebt).toEqual({ payerId: "A", creditorId: "B", amount: 6_000 });
+    expect(state.players[0]?.bankrupt).toBe(false);
+    expect(state.players[0]?.cash).toBe(1_000);
+  });
+
+  it("bankrupts immediately when the player owns no pledgeable assets (unchanged behavior)", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 3: "B" },
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 1_000 } : p)),
+    };
+
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    ({ state } = reduce(state, { type: "PAY_RENT" }, config));
+
+    expect(state.turnPhase).toBe("turn_over");
+    expect(state.players[0]?.bankrupt).toBe(true);
+  });
+
+  it("TAKE_LOAN against a whole property adds 80% of its price and settles the debt", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 3: "B", 1: "A" },
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 1_000 } : p)),
+    };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    ({ state } = reduce(state, { type: "PAY_RENT" }, config));
+    expect(state.turnPhase).toBe("awaiting_loan_decision");
+
+    ({ state } = reduce(state, { type: "TAKE_LOAN", tileId: 1, kind: "property" }, config));
+
+    expect(state.turnPhase).toBe("turn_over");
+    expect(state.pendingDebt).toBeNull();
+    expect(state.loans).toEqual([{ tileId: 1, playerId: "A", kind: "property", principal: 48_000, roundsElapsed: 0 }]);
+    // 1_000 + 48_000 loan - 6_000 rent
+    expect(state.players[0]?.cash).toBe(1_000 + 48_000 - 6_000);
+    expect(state.players[1]?.cash).toBe(500_000 + 6_000);
+  });
+
+  it("TAKE_LOAN against a house values it at the group's house cost instead of the tile price", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 3: "B", 1: "A" },
+      houses: { ...state.houses, 1: 2 },
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 1_000 } : p)),
+    };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    ({ state } = reduce(state, { type: "PAY_RENT" }, config));
+
+    ({ state } = reduce(state, { type: "TAKE_LOAN", tileId: 1, kind: "house" }, config));
+
+    // tile 1 is in the "gold" group, house cost 50_000 -> principal 40_000
+    expect(state.loans).toEqual([{ tileId: 1, playerId: "A", kind: "house", principal: 40_000, roundsElapsed: 0 }]);
+    expect(state.ownership[1]).toBe("A");
+    expect(state.houses[1]).toBe(2);
+    expect(state.turnPhase).toBe("turn_over");
+  });
+
+  it("allows taking several loans in sequence when one alone doesn't cover the debt", () => {
+    let state = createInitialState(players(), config, 1);
+    state = {
+      ...state,
+      turnPhase: "awaiting_loan_decision",
+      pendingDebt: { payerId: "A", creditorId: "B", amount: 100_000 },
+      ownership: { ...state.ownership, 1: "A", 3: "A" },
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 1_000 } : p)),
+    };
+
+    ({ state } = reduce(state, { type: "TAKE_LOAN", tileId: 1, kind: "property" }, config));
+    expect(state.turnPhase).toBe("awaiting_loan_decision");
+    expect(state.players[0]?.cash).toBe(1_000 + 48_000);
+
+    ({ state } = reduce(state, { type: "TAKE_LOAN", tileId: 3, kind: "property" }, config));
+    expect(state.turnPhase).toBe("turn_over");
+    expect(state.pendingDebt).toBeNull();
+    expect(state.loans.map((l) => l.tileId).sort()).toEqual([1, 3]);
+    expect(state.players[0]?.cash).toBe(1_000 + 48_000 + 64_000 - 100_000);
+    expect(state.players[1]?.cash).toBe(500_000 + 100_000);
+  });
+
+  it("falls through to bankruptcy when a loan still isn't enough and no collateral remains", () => {
+    let state = createInitialState(players(), config, 1);
+    state = {
+      ...state,
+      turnPhase: "awaiting_loan_decision",
+      pendingDebt: { payerId: "A", creditorId: "B", amount: 999_999 },
+      ownership: { ...state.ownership, 1: "A" },
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 1_000 } : p)),
+    };
+
+    ({ state } = reduce(state, { type: "TAKE_LOAN", tileId: 1, kind: "property" }, config));
+
+    expect(state.turnPhase).toBe("turn_over");
+    expect(state.players[0]?.bankrupt).toBe(true);
+    expect(state.players[0]?.cash).toBe(0);
+    expect(state.pendingDebt).toBeNull();
+    expect(state.loans.some((l) => l.playerId === "A")).toBe(false);
+    expect(state.ownership[1]).toBeNull();
+  });
+
+  it("DECLARE_BANKRUPTCY bankrupts even though collateral was available", () => {
+    let state = createInitialState(players(), config, 1);
+    state = {
+      ...state,
+      turnPhase: "awaiting_loan_decision",
+      pendingDebt: { payerId: "A", creditorId: "B", amount: 6_000 },
+      ownership: { ...state.ownership, 1: "A" },
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 1_000 } : p)),
+    };
+
+    ({ state } = reduce(state, { type: "DECLARE_BANKRUPTCY" }, config));
+
+    expect(state.turnPhase).toBe("turn_over");
+    expect(state.players[0]?.bankrupt).toBe(true);
+    expect(state.pendingDebt).toBeNull();
+    expect(state.ownership[1]).toBeNull();
+  });
+
+  it("ignores TAKE_LOAN/DECLARE_BANKRUPTCY when the acting player isn't the debtor", () => {
+    let state = createInitialState(players(), config, 1);
+    state = {
+      ...state,
+      turnPhase: "awaiting_loan_decision",
+      pendingDebt: { payerId: "B", creditorId: "A", amount: 6_000 },
+      ownership: { ...state.ownership, 1: "A" },
+    };
+    const before = state;
+
+    const takeLoan = reduce(state, { type: "TAKE_LOAN", tileId: 1, kind: "property" }, config);
+    const bankrupt = reduce(state, { type: "DECLARE_BANKRUPTCY" }, config);
+
+    expect(takeLoan.state).toEqual(before);
+    expect(bankrupt.state).toEqual(before);
+  });
+
+  it("REPAY_LOAN deducts the principal and removes the loan", () => {
+    let state = createInitialState(players(), config, 1);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 1: "A" },
+      loans: [{ tileId: 1, playerId: "A", kind: "property" as const, principal: 64_000, roundsElapsed: 1 }],
+    };
+
+    const { state: next } = reduce(state, { type: "REPAY_LOAN", tileId: 1 }, config);
+
+    expect(next.loans).toEqual([]);
+    expect(next.players[0]?.cash).toBe(500_000 - 64_000);
+  });
+
+  it("REPAY_LOAN no-ops without enough cash or for someone else's loan", () => {
+    let state = createInitialState(players(), config, 1);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 1: "A" },
+      loans: [{ tileId: 1, playerId: "A", kind: "property" as const, principal: 64_000, roundsElapsed: 1 }],
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 10_000 } : p)),
+    };
+
+    const { state: poorResult } = reduce(state, { type: "REPAY_LOAN", tileId: 1 }, config);
+    expect(poorResult.loans).toHaveLength(1);
+
+    let stateB = {
+      ...state,
+      loans: [{ tileId: 1, playerId: "B", kind: "property" as const, principal: 64_000, roundsElapsed: 1 }],
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 500_000 } : p)),
+    };
+    const { state: wrongOwnerResult } = reduce(stateB, { type: "REPAY_LOAN", tileId: 1 }, config);
+    expect(wrongOwnerResult.loans).toHaveLength(1);
+  });
+
+  it("charges interest each of the player's own rolls and seizes the collateral after 3 unpaid rounds", () => {
+    let state = createInitialState(players(), config, 1);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 1: "A" },
+      loans: [{ tileId: 1, playerId: "A", kind: "property" as const, principal: 64_000, roundsElapsed: 0 }],
+    };
+
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    let loan = state.loans.find((l) => l.tileId === 1);
+    expect(loan?.roundsElapsed).toBe(1);
+    expect(state.players[0]?.cash).toBeLessThan(500_000);
+
+    state = { ...state, turnPhase: "awaiting_roll" };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    loan = state.loans.find((l) => l.tileId === 1);
+    expect(loan?.roundsElapsed).toBe(2);
+    expect(state.ownership[1]).toBe("A");
+
+    state = { ...state, turnPhase: "awaiting_roll" };
+    const { state: finalState, events } = reduce(state, { type: "ROLL_DICE" }, config);
+
+    expect(finalState.loans.some((l) => l.tileId === 1)).toBe(false);
+    expect(finalState.ownership[1]).toBeNull();
+    expect(events.some((e) => e.type === "LoanCollateralSeized")).toBe(true);
+  });
+
+  it("a repay before the 3rd round prevents seizure", () => {
+    let state = createInitialState(players(), config, 1);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 1: "A" },
+      loans: [{ tileId: 1, playerId: "A", kind: "property" as const, principal: 64_000, roundsElapsed: 1 }],
+    };
+
+    ({ state } = reduce(state, { type: "REPAY_LOAN", tileId: 1 }, config));
+    expect(state.loans).toEqual([]);
+
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    expect(state.ownership[1]).toBe("A");
   });
 });
 

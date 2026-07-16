@@ -6,7 +6,9 @@ import type { LogLine, LogSegment } from "../core/log";
 import type { PlayerColorMap } from "../render/boardRenderer";
 import { ownsFullColorGroup, calculateRent } from "../core/rules";
 import { houseCostForGroup, MAX_HOUSES } from "../core/houses";
+import { getPledgeableOptions } from "../core/loans";
 import { DEFAULT_STARTING_CASH } from "../core/engine";
+import { MIN_CASINO_STAKE } from "../core/casino";
 
 export type UIEventName =
   | "roll"
@@ -23,6 +25,9 @@ export type UIEventName =
   | "end-turn"
   | "new-game"
   | "build-house"
+  | "take-loan"
+  | "repay-loan"
+  | "declare-bankruptcy"
   | "restart-config";
 
 export interface RestartConfigDetail {
@@ -93,12 +98,43 @@ export function describeEvent(
       return [name(event.playerId), { text: ` left jail (${event.method})` }];
     case "CasinoResult":
       return event.multiplier > 0
-        ? [name(event.playerId), { text: ` won x${event.multiplier} at the casino (+${formatMoney(event.amount)})` }]
-        : [name(event.playerId), { text: " lost at the casino" }];
+        ? [
+            name(event.playerId),
+            { text: ` won x${event.multiplier} at the casino on a ${formatMoney(event.stake)} bet (+${formatMoney(event.amount)})` },
+          ]
+        : [name(event.playerId), { text: ` lost their ${formatMoney(event.stake)} bet at the casino` }];
     case "CasinoSkipped":
       return [name(event.playerId), { text: " skipped the casino" }];
     case "PlayerBankrupt":
       return [name(event.playerId), { text: " went bankrupt" }];
+    case "LoanRequired":
+      return [name(event.playerId), { text: ` cannot cover ${formatMoney(event.amount)} and must take a loan or go bankrupt` }];
+    case "LoanTaken":
+      return [
+        name(event.playerId),
+        {
+          text: ` pledged ${event.kind === "house" ? "a house on " : ""}${board[event.tileId]?.name ?? event.tileId} for a loan of ${formatMoney(event.principal)}`,
+        },
+      ];
+    case "LoanRepaid":
+      return [
+        name(event.playerId),
+        { text: ` repaid the loan on ${board[event.tileId]?.name ?? event.tileId} (${formatMoney(event.principal)})` },
+      ];
+    case "LoanInterestCharged":
+      return event.amount > 0
+        ? [
+            name(event.playerId),
+            { text: ` paid ${formatMoney(event.amount)} interest on the loan for ${board[event.tileId]?.name ?? event.tileId}` },
+          ]
+        : null;
+    case "LoanCollateralSeized":
+      return [
+        name(event.playerId),
+        {
+          text: ` failed to repay in time — the bank seized ${event.kind === "house" ? "a house on " : ""}${board[event.tileId]?.name ?? event.tileId}`,
+        },
+      ];
     case "HouseBuilt":
       return [
         name(event.playerId),
@@ -192,6 +228,18 @@ export class GameUI {
     this.events.dispatchEvent(new CustomEvent("build-house", { detail: { tileId } }));
   }
 
+  private emitTakeLoan(tileId: number, kind: "house" | "property"): void {
+    this.events.dispatchEvent(new CustomEvent("take-loan", { detail: { tileId, kind } }));
+  }
+
+  private emitRepayLoan(tileId: number): void {
+    this.events.dispatchEvent(new CustomEvent("repay-loan", { detail: { tileId } }));
+  }
+
+  private emitPlayCasino(stake: number): void {
+    this.events.dispatchEvent(new CustomEvent("casino-spin", { detail: { stake } }));
+  }
+
   private emitBuyoutResponse(name: "accept-buyout" | "reject-buyout", playerId: string): void {
     this.events.dispatchEvent(new CustomEvent(name, { detail: { playerId } }));
   }
@@ -221,8 +269,9 @@ export class GameUI {
       swatch.className = "ui-swatch";
       swatch.style.background = colors[p.id] ?? "#fff";
       row.appendChild(swatch);
+      const loanCount = state.loans.filter((l) => l.playerId === p.id).length;
       const label = document.createElement("span");
-      label.textContent = `${p.name}: ${formatMoney(p.cash)}${p.inJail ? " (jail)" : ""}${p.bankrupt ? " (bankrupt)" : ""}`;
+      label.textContent = `${p.name}: ${formatMoney(p.cash)}${p.inJail ? " (jail)" : ""}${p.bankrupt ? " (bankrupt)" : ""}${loanCount > 0 ? ` (loans: ${loanCount})` : ""}`;
       row.appendChild(label);
       this.playersEl.appendChild(row);
     });
@@ -261,7 +310,7 @@ export class GameUI {
           const buyoutAmount = Math.round(tile.price * 1.2);
           this.actionsEl.appendChild(this.button(`Pay rent (${formatMoney(rent)})`, "pay-rent"));
           this.actionsEl.appendChild(
-            this.button(`Offer buyout (${formatMoney(buyoutAmount)})`, "offer-buyout", player.cash <= 0),
+            this.button(`Offer buyout (${formatMoney(buyoutAmount)})`, "offer-buyout", player.cash < buyoutAmount),
           );
         }
         break;
@@ -280,8 +329,49 @@ export class GameUI {
         break;
       }
       case "awaiting_casino_spin": {
-        this.actionsEl.appendChild(this.button("Spin casino", "casino-spin"));
+        const maxStake = Math.max(MIN_CASINO_STAKE, player.cash);
+        const stakeLabel = document.createElement("label");
+        stakeLabel.textContent = "Bet: ";
+        const stakeInput = document.createElement("input");
+        stakeInput.type = "number";
+        stakeInput.min = String(MIN_CASINO_STAKE);
+        stakeInput.max = String(maxStake);
+        stakeInput.step = String(MIN_CASINO_STAKE);
+        stakeInput.value = String(Math.min(MIN_CASINO_STAKE, maxStake));
+        stakeLabel.appendChild(stakeInput);
+        this.actionsEl.appendChild(stakeLabel);
+
+        const spinBtn = document.createElement("button");
+        spinBtn.textContent = "Spin casino";
+        spinBtn.disabled = player.cash < MIN_CASINO_STAKE;
+        spinBtn.addEventListener("click", () => {
+          const stake = Math.min(maxStake, Math.max(MIN_CASINO_STAKE, Math.round(Number(stakeInput.value))));
+          this.emitPlayCasino(stake);
+        });
+        this.actionsEl.appendChild(spinBtn);
+
         this.actionsEl.appendChild(this.button("Skip", "casino-skip"));
+        break;
+      }
+      case "awaiting_loan_decision": {
+        const debt = state.pendingDebt;
+        const p = document.createElement("p");
+        p.textContent = debt
+          ? `${player.name} cannot cover ${formatMoney(debt.amount)}. Pledge an asset for a loan, or declare bankruptcy.`
+          : "";
+        this.actionsEl.appendChild(p);
+        const options = getPledgeableOptions(board, state.ownership, state.houses, state.loans, player.id);
+        for (const option of options) {
+          const label =
+            option.kind === "house"
+              ? `Pledge a house on ${option.tileName} for ${formatMoney(option.principal)}`
+              : `Pledge ${option.tileName} for ${formatMoney(option.principal)}`;
+          const btn = document.createElement("button");
+          btn.textContent = label;
+          btn.addEventListener("click", () => this.emitTakeLoan(option.tileId, option.kind));
+          this.actionsEl.appendChild(btn);
+        }
+        this.actionsEl.appendChild(this.button("Declare bankruptcy", "declare-bankruptcy"));
         break;
       }
       case "turn_over": {
@@ -299,6 +389,19 @@ export class GameUI {
 
     if (state.turnPhase === "awaiting_roll" || state.turnPhase === "turn_over") {
       this.renderBuildHouseButtons(state, board, player);
+      this.renderLoanRepayButtons(state, board, player);
+    }
+  }
+
+  private renderLoanRepayButtons(state: GameState, board: Tile[], player: GameState["players"][number]): void {
+    const loans = state.loans.filter((l) => l.playerId === player.id);
+    for (const loan of loans) {
+      const tileName = board[loan.tileId]?.name ?? loan.tileId;
+      const btn = document.createElement("button");
+      btn.textContent = `Repay loan on ${tileName} — ${formatMoney(loan.principal)}`;
+      btn.disabled = player.cash < loan.principal;
+      btn.addEventListener("click", () => this.emitRepayLoan(loan.tileId));
+      this.actionsEl.appendChild(btn);
     }
   }
 

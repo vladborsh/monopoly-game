@@ -15,9 +15,14 @@ export type GameEvent =
   | { type: "CardDrawn"; playerId: string; deck: "chance" | "treasury"; card: Card }
   | { type: "PlayerJailed"; playerId: string; reason: "doubles" | "card" }
   | { type: "PlayerReleasedFromJail"; playerId: string; method: "paid" | "card" | "doubles" }
-  | { type: "CasinoResult"; playerId: string; multiplier: number; amount: number }
+  | { type: "CasinoResult"; playerId: string; multiplier: number; amount: number; stake: number }
   | { type: "CasinoSkipped"; playerId: string }
   | { type: "PlayerBankrupt"; playerId: string; creditorId: string | null }
   | { type: "GameOver"; winnerId: string }
   | { type: "TurnEnded"; nextPlayerId: string }
-  | { type: "HouseBuilt"; playerId: string; tileId: number; houses: number };
+  | { type: "HouseBuilt"; playerId: string; tileId: number; houses: number }
+  | { type: "LoanRequired"; playerId: string; creditorId: string | null; amount: number }
+  | { type: "LoanTaken"; playerId: string; tileId: number; kind: "house" | "property"; principal: number }
+  | { type: "LoanRepaid"; playerId: string; tileId: number; kind: "house" | "property"; principal: number }
+  | { type: "LoanInterestCharged"; playerId: string; tileId: number; amount: number }
+  | { type: "LoanCollateralSeized"; playerId: string; tileId: number; kind: "house" | "property" };

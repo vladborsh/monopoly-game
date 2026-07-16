@@ -10,11 +10,11 @@ const EVENT_TO_ACTION: Partial<Record<UIEventName, Action>> = {
   decline: { type: "DECLINE_PROPERTY" },
   "pay-rent": { type: "PAY_RENT" },
   "offer-buyout": { type: "OFFER_BUYOUT" },
-  "casino-spin": { type: "PLAY_CASINO" },
   "casino-skip": { type: "SKIP_CASINO" },
   "pay-bail": { type: "PAY_BAIL" },
   "use-jail-card": { type: "USE_JAIL_CARD" },
   "end-turn": { type: "END_TURN" },
+  "declare-bankruptcy": { type: "DECLARE_BANKRUPTCY" },
 };
 
 /** Translates UI-emitted intents into engine Action objects. Knows nothing about rendering. */
@@ -25,6 +25,10 @@ export class InputController {
       if (!action) continue;
       ui.events.addEventListener(name, () => dispatch(action));
     }
+    ui.events.addEventListener("casino-spin", (e) => {
+      const stake = (e as CustomEvent<{ stake: number }>).detail.stake;
+      dispatch({ type: "PLAY_CASINO", stake });
+    });
     ui.events.addEventListener("build-house", (e) => {
       const tileId = (e as CustomEvent<{ tileId: number }>).detail.tileId;
       dispatch({ type: "BUILD_HOUSE", tileId });
@@ -36,6 +40,14 @@ export class InputController {
     ui.events.addEventListener("reject-buyout", (e) => {
       const playerId = (e as CustomEvent<{ playerId: string }>).detail.playerId;
       dispatch({ type: "REJECT_BUYOUT", playerId });
+    });
+    ui.events.addEventListener("take-loan", (e) => {
+      const { tileId, kind } = (e as CustomEvent<{ tileId: number; kind: "house" | "property" }>).detail;
+      dispatch({ type: "TAKE_LOAN", tileId, kind });
+    });
+    ui.events.addEventListener("repay-loan", (e) => {
+      const tileId = (e as CustomEvent<{ tileId: number }>).detail.tileId;
+      dispatch({ type: "REPAY_LOAN", tileId });
     });
   }
 }

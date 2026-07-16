@@ -14,7 +14,7 @@ const CASINO_TABLE: { multiplier: number; weight: number }[] = [
 
 const TOTAL_WEIGHT = CASINO_TABLE.reduce((sum, entry) => sum + entry.weight, 0);
 
-export const CASINO_STAKE = 10_000;
+export const MIN_CASINO_STAKE = 10_000;
 
 export function spinCasino(seed: number): { multiplier: number; nextSeed: number } {
   const advanced = nextSeed(seed);
