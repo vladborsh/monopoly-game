@@ -2,9 +2,11 @@ import type { Tile } from "../core/board";
 import { isOwnable } from "../core/board";
 import type { GameState } from "../core/state";
 import type { GameEvent } from "../core/events";
+import type { LogLine, LogSegment } from "../core/log";
 import type { PlayerColorMap } from "../render/boardRenderer";
 import { ownsFullColorGroup } from "../core/rules";
 import { houseCostForGroup, MAX_HOUSES } from "../core/houses";
+import { DEFAULT_STARTING_CASH } from "../core/engine";
 
 export type UIEventName =
   | "roll"
@@ -16,42 +18,74 @@ export type UIEventName =
   | "use-jail-card"
   | "end-turn"
   | "new-game"
-  | "build-house";
+  | "build-house"
+  | "restart-config";
+
+export interface RestartConfigDetail {
+  playerCount: number;
+  startingCash: number;
+}
+
+const MIN_PLAYERS = 2;
+const MAX_PLAYERS = 8;
+const DEFAULT_PLAYER_COUNT = 2;
 
 function formatMoney(amount: number): string {
   return amount.toLocaleString("uk-UA");
 }
 
-export function describeEvent(event: GameEvent, board: Tile[]): string | null {
+function playerSegment(playerId: string, playerNames: Record<string, string>): LogSegment {
+  return { text: playerNames[playerId] ?? playerId, playerId };
+}
+
+export function describeEvent(
+  event: GameEvent,
+  board: Tile[],
+  playerNames: Record<string, string>,
+): LogLine | null {
+  const name = (playerId: string): LogSegment => playerSegment(playerId, playerNames);
   switch (event.type) {
     case "DiceRolled":
-      return `${event.playerId} rolled ${event.dice[0]} + ${event.dice[1]}${event.isDouble ? " (double!)" : ""}`;
+      return [
+        name(event.playerId),
+        { text: ` rolled ${event.dice[0]} + ${event.dice[1]}${event.isDouble ? " (double!)" : ""}` },
+      ];
     case "SalaryPaid":
-      return `${event.playerId} passed GO, +${formatMoney(event.amount)}`;
+      return [name(event.playerId), { text: ` passed GO, +${formatMoney(event.amount)}` }];
     case "RentCharged":
-      return `${event.payerId} paid ${formatMoney(event.amount)} rent to ${event.ownerId}`;
+      return [
+        name(event.payerId),
+        { text: ` paid ${formatMoney(event.amount)} rent to ` },
+        name(event.ownerId),
+      ];
     case "PropertyBought":
-      return `${event.playerId} bought ${board[event.tileId]?.name ?? event.tileId} for ${formatMoney(event.price)}`;
+      return [
+        name(event.playerId),
+        { text: ` bought ${board[event.tileId]?.name ?? event.tileId} for ${formatMoney(event.price)}` },
+      ];
     case "TaxCharged":
-      return `${event.playerId} paid ${formatMoney(event.amount)} tax`;
+      return [name(event.playerId), { text: ` paid ${formatMoney(event.amount)} tax` }];
     case "CardDrawn":
-      return `${event.playerId} drew a ${event.deck} card: "${event.card.text}"`;
+      return [name(event.playerId), { text: ` drew a ${event.deck} card: "${event.card.text}"` }];
     case "PlayerJailed":
-      return `${event.playerId} was sent to jail (${event.reason})`;
+      return [name(event.playerId), { text: ` was sent to jail (${event.reason})` }];
     case "PlayerReleasedFromJail":
-      return `${event.playerId} left jail (${event.method})`;
+      return [name(event.playerId), { text: ` left jail (${event.method})` }];
     case "CasinoResult":
       return event.multiplier > 0
-        ? `${event.playerId} won x${event.multiplier} at the casino (+${formatMoney(event.amount)})`
-        : `${event.playerId} lost at the casino`;
+        ? [name(event.playerId), { text: ` won x${event.multiplier} at the casino (+${formatMoney(event.amount)})` }]
+        : [name(event.playerId), { text: " lost at the casino" }];
     case "CasinoSkipped":
-      return `${event.playerId} skipped the casino`;
+      return [name(event.playerId), { text: " skipped the casino" }];
     case "PlayerBankrupt":
-      return `${event.playerId} went bankrupt`;
+      return [name(event.playerId), { text: " went bankrupt" }];
     case "HouseBuilt":
-      return `${event.playerId} built a house on ${board[event.tileId]?.name ?? event.tileId} (${event.houses}/${MAX_HOUSES})`;
+      return [
+        name(event.playerId),
+        { text: ` built a house on ${board[event.tileId]?.name ?? event.tileId} (${event.houses}/${MAX_HOUSES})` },
+      ];
     case "GameOver":
-      return `${event.winnerId} wins the game!`;
+      return [name(event.winnerId), { text: " wins the game!" }];
     default:
       return null;
   }
@@ -63,19 +97,69 @@ export class GameUI {
   private playersEl: HTMLElement;
   private actionsEl: HTMLElement;
   private logEl: HTMLElement;
+  private restartDialog: HTMLDialogElement;
+  private restartForm: HTMLFormElement;
+  private playerCountInput: HTMLInputElement;
+  private startingCashInput: HTMLInputElement;
 
   constructor(root: HTMLElement) {
     this.root = root;
     this.root.innerHTML = `
       <div class="ui-panel">
+        <div class="ui-header">
+          <button type="button" id="ui-restart-btn">Restart game</button>
+        </div>
         <div id="ui-players" class="ui-players"></div>
         <div id="ui-actions" class="ui-actions"></div>
         <div id="ui-log" class="ui-log"></div>
       </div>
+      <dialog id="ui-restart-dialog" class="ui-restart-dialog">
+        <form id="ui-restart-form" method="dialog" class="ui-restart-form">
+          <h2>Restart game</h2>
+          <label>
+            Players
+            <input type="number" id="ui-restart-players" min="${MIN_PLAYERS}" max="${MAX_PLAYERS}" step="1" value="${DEFAULT_PLAYER_COUNT}" required />
+          </label>
+          <label>
+            Starting budget
+            <input type="number" id="ui-restart-cash" min="0" step="10000" value="${DEFAULT_STARTING_CASH}" required />
+          </label>
+          <div class="ui-restart-form__buttons">
+            <button type="button" id="ui-restart-cancel">Cancel</button>
+            <button type="submit" id="ui-restart-confirm">Start</button>
+          </div>
+        </form>
+      </dialog>
     `;
     this.playersEl = this.root.querySelector("#ui-players")!;
     this.actionsEl = this.root.querySelector("#ui-actions")!;
     this.logEl = this.root.querySelector("#ui-log")!;
+    this.restartDialog = this.root.querySelector("#ui-restart-dialog")!;
+    this.restartForm = this.root.querySelector("#ui-restart-form")!;
+    this.playerCountInput = this.root.querySelector("#ui-restart-players")!;
+    this.startingCashInput = this.root.querySelector("#ui-restart-cash")!;
+
+    this.root.querySelector("#ui-restart-btn")!.addEventListener("click", () => this.openRestartDialog());
+    this.root.querySelector("#ui-restart-cancel")!.addEventListener("click", () => this.restartDialog.close());
+    this.restartForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      this.confirmRestart();
+    });
+  }
+
+  private openRestartDialog(): void {
+    this.playerCountInput.value = String(DEFAULT_PLAYER_COUNT);
+    this.startingCashInput.value = String(DEFAULT_STARTING_CASH);
+    this.restartDialog.showModal();
+  }
+
+  private confirmRestart(): void {
+    const playerCount = Math.min(MAX_PLAYERS, Math.max(MIN_PLAYERS, Math.round(Number(this.playerCountInput.value))));
+    const startingCash = Math.max(0, Math.round(Number(this.startingCashInput.value)));
+    this.restartDialog.close();
+    this.events.dispatchEvent(
+      new CustomEvent<RestartConfigDetail>("restart-config", { detail: { playerCount, startingCash } }),
+    );
   }
 
   private emit(name: UIEventName): void {
@@ -178,13 +262,23 @@ export class GameUI {
     }
   }
 
-  setLog(entries: string[]): void {
+  setLog(entries: LogLine[], colors: PlayerColorMap): void {
     this.logEl.innerHTML = "";
     for (let i = entries.length - 1; i >= 0; i--) {
-      const text = entries[i];
-      if (text === undefined) continue;
+      const segments = entries[i];
+      if (segments === undefined) continue;
       const line = document.createElement("div");
-      line.textContent = text;
+      for (const segment of segments) {
+        if (segment.playerId) {
+          const span = document.createElement("span");
+          span.className = "ui-log-player";
+          span.style.color = colors[segment.playerId] ?? "inherit";
+          span.textContent = segment.text;
+          line.appendChild(span);
+        } else {
+          line.appendChild(document.createTextNode(segment.text));
+        }
+      }
       this.logEl.appendChild(line);
     }
   }

@@ -23,13 +23,14 @@ export interface ReduceResult {
   events: GameEvent[];
 }
 
-const STARTING_CASH = 500_000;
+export const DEFAULT_STARTING_CASH = 500_000;
 const STARTING_JACKPOT = 200_000;
 
 export function createInitialState(
   players: { id: string; name: string }[],
   config: GameConfig,
   rngSeed: number,
+  startingCash: number = DEFAULT_STARTING_CASH,
 ): GameState {
   let seed = rngSeed;
   const chanceFloats: number[] = [];
@@ -46,7 +47,7 @@ export function createInitialState(
   const initialPlayers: Player[] = players.map((p) => ({
     id: p.id,
     name: p.name,
-    cash: STARTING_CASH,
+    cash: startingCash,
     position: 0,
     inJail: false,
     jailTurns: 0,

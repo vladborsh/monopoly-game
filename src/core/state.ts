@@ -1,3 +1,5 @@
+import type { LogLine } from "./log";
+
 export type TurnPhase =
   | "awaiting_roll"
   | "awaiting_property_decision"
@@ -32,7 +34,7 @@ export interface GameState {
   jackpot: number;
   rngSeed: number;
   winnerId: string | null;
-  log: string[];
+  log: LogLine[];
 }
 
 export function currentPlayer(state: GameState): Player {
