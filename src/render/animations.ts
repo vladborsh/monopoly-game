@@ -6,6 +6,16 @@ const DICE_ROLL_DURATION_MS = 700;
 const DICE_TICK_MS = 70;
 const CASINO_SPIN_DURATION_MS = 700;
 const CASINO_TICK_MS = 70;
+const PURCHASE_PARTICLE_DURATION_MS = 750;
+const PURCHASE_PARTICLE_COUNT = 36;
+
+export interface Particle {
+  x: number;
+  y: number;
+  alpha: number;
+  radius: number;
+  color: string;
+}
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -91,6 +101,55 @@ export function animateDiceRoll(
 
       const spin = (1 - t) * Math.PI * 6;
       onUpdate(current, [spin, -spin]);
+      requestAnimationFrame(step);
+    }
+
+    requestAnimationFrame(step);
+  });
+}
+
+/**
+ * Bursts particles outward from a tile's center to celebrate a property purchase,
+ * fading and drifting under a light gravity, then resolves once they've faded out.
+ */
+export function animatePurchaseParticles(
+  tileId: number,
+  color: string,
+  onUpdate: (particles: Particle[]) => void,
+): Promise<void> {
+  const center = tileCenter(tileId);
+  const seeds = Array.from({ length: PURCHASE_PARTICLE_COUNT }, () => {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 30 + Math.random() * Math.random() * 260;
+    return {
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      radius: 1.5 + Math.random() * 3,
+    };
+  });
+
+  return new Promise((resolve) => {
+    const start = performance.now();
+
+    function step(now: number): void {
+      const elapsed = now - start;
+      const t = Math.min(1, elapsed / PURCHASE_PARTICLE_DURATION_MS);
+
+      if (t >= 1) {
+        onUpdate([]);
+        resolve();
+        return;
+      }
+
+      const seconds = elapsed / 1000;
+      const particles: Particle[] = seeds.map((seed) => ({
+        x: center.x + seed.vx * seconds,
+        y: center.y + seed.vy * seconds + 40 * seconds * seconds,
+        alpha: 1 - t,
+        radius: seed.radius,
+        color,
+      }));
+      onUpdate(particles);
       requestAnimationFrame(step);
     }
 

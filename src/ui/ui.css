@@ -4,8 +4,10 @@
   gap: 12px;
   font-family: sans-serif;
   color: #e8e8e8;
-  min-width: 240px;
-  max-width: 320px;
+  width: 360px;
+  flex: 0 0 360px;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .ui-players {
@@ -20,6 +22,13 @@
   gap: 8px;
   padding: 4px 8px;
   border-radius: 4px;
+  min-width: 0;
+}
+
+.ui-player span:last-child {
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-width: 0;
 }
 
 .ui-player--active {
@@ -38,25 +47,103 @@
   display: inline-block;
 }
 
+.ui-tile-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #1e2228;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 10px 12px;
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 360px;
+  box-sizing: border-box;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+
+.ui-tile-info:empty {
+  display: none;
+}
+
+.ui-tile-info__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.ui-tile-info__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.ui-tile-info__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: #a8b0b8;
+}
+
+.ui-tile-info__value {
+  color: #e8e8e8;
+  font-weight: 600;
+  text-align: right;
+}
+
 .ui-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .ui-actions button {
-  padding: 8px 14px;
+  padding: 6px 10px;
   border-radius: 6px;
   border: none;
   background: #3f7fbf;
   color: white;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 12px;
+  line-height: 1.3;
+  max-width: 100%;
+  white-space: normal;
+  word-break: break-word;
+  box-sizing: border-box;
 }
 
 .ui-actions button:disabled {
   background: #444;
   cursor: not-allowed;
+}
+
+.ui-actions p,
+.ui-actions label {
+  width: 100%;
+  margin: 0;
+  font-size: 13px;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  box-sizing: border-box;
+}
+
+.ui-actions input[type="number"] {
+  width: 100px;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .ui-log {

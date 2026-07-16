@@ -3,9 +3,15 @@ import { isOwnable } from "../core/board";
 import type { GameState } from "../core/state";
 import type { GameEvent } from "../core/events";
 import type { LogLine, LogSegment } from "../core/log";
-import type { PlayerColorMap } from "../render/boardRenderer";
-import { ownsFullColorGroup, calculateRent, buyoutAmountForTile } from "../core/rules";
-import { houseCostForBuild, MAX_HOUSES } from "../core/houses";
+import { tileColor, type PlayerColorMap } from "../render/boardRenderer";
+import {
+  ownsFullColorGroup,
+  calculateRent,
+  calculatePropertyRent,
+  buyoutAmountForTile,
+  COMPANY_RENT_BY_COUNT,
+} from "../core/rules";
+import { houseCostForBuild, rentPerHouseForGroup, MAX_HOUSES } from "../core/houses";
 import { getPledgeableOptions } from "../core/loans";
 import { DEFAULT_STARTING_CASH } from "../core/engine";
 import { MIN_CASINO_STAKE } from "../core/casino";
@@ -151,6 +157,7 @@ export class GameUI {
   readonly events = new EventTarget();
   private root: HTMLElement;
   private playersEl: HTMLElement;
+  private tileInfoEl: HTMLElement;
   private actionsEl: HTMLElement;
   private logEl: HTMLElement;
   private restartDialog: HTMLDialogElement;
@@ -170,6 +177,7 @@ export class GameUI {
         <div id="ui-players" class="ui-players"></div>
         <div id="ui-actions" class="ui-actions"></div>
         <div id="ui-log" class="ui-log"></div>
+        <div id="ui-tile-info" class="ui-tile-info"></div>
       </div>
       <dialog id="ui-restart-dialog" class="ui-restart-dialog">
         <form id="ui-restart-form" method="dialog" class="ui-restart-form">
@@ -190,6 +198,7 @@ export class GameUI {
       </dialog>
     `;
     this.playersEl = this.root.querySelector("#ui-players")!;
+    this.tileInfoEl = this.root.querySelector("#ui-tile-info")!;
     this.actionsEl = this.root.querySelector("#ui-actions")!;
     this.logEl = this.root.querySelector("#ui-log")!;
     this.restartDialog = this.root.querySelector("#ui-restart-dialog")!;
@@ -275,6 +284,70 @@ export class GameUI {
       row.appendChild(label);
       this.playersEl.appendChild(row);
     });
+  }
+
+  renderTileInfo(state: GameState, board: Tile[], colors: PlayerColorMap): void {
+    this.tileInfoEl.innerHTML = "";
+    const player = state.players[state.currentPlayerIndex];
+    const tile = player ? board[player.position] : undefined;
+    if (!player || !tile || !isOwnable(tile)) return;
+
+    const row = (label: string, value: string, color?: string): void => {
+      const el = document.createElement("div");
+      el.className = "ui-tile-info__row";
+      const labelEl = document.createElement("span");
+      labelEl.className = "ui-tile-info__label";
+      labelEl.textContent = label;
+      const valueEl = document.createElement("span");
+      valueEl.className = "ui-tile-info__value";
+      valueEl.textContent = value;
+      if (color) valueEl.style.color = color;
+      el.appendChild(labelEl);
+      el.appendChild(valueEl);
+      this.tileInfoEl.appendChild(el);
+    };
+
+    const title = document.createElement("div");
+    title.className = "ui-tile-info__title";
+    const swatch = document.createElement("span");
+    swatch.className = "ui-tile-info__swatch";
+    swatch.style.background = tileColor(tile);
+    title.appendChild(swatch);
+    title.appendChild(document.createTextNode(tile.name));
+    this.tileInfoEl.appendChild(title);
+
+    row("Price", formatMoney(tile.price));
+
+    const ownerId = state.ownership[tile.id];
+    if (ownerId) {
+      const ownerName = state.players.find((p) => p.id === ownerId)?.name ?? ownerId;
+      row("Owner", ownerName, colors[ownerId]);
+      const rent = calculateRent(tile, state.ownership, ownerId, board, state.houses);
+      row("Rent", formatMoney(rent));
+    }
+
+    if (tile.type === "property") {
+      const landOnlyRent = ownerId ? calculatePropertyRent(tile, state.ownership, ownerId, board, {}) : tile.baseRent;
+      row("Rent (land only)", formatMoney(landOnlyRent));
+
+      const houses = state.houses[tile.id] ?? 0;
+      row("Rent per house", formatMoney(rentPerHouseForGroup(tile.colorGroup)));
+      if (houses < MAX_HOUSES) {
+        row("Next house cost", formatMoney(houseCostForBuild(tile.colorGroup, houses)));
+      } else {
+        row("Houses", "Max built");
+      }
+    } else if (tile.type === "company") {
+      const ownedCount = ownerId
+        ? board.filter((t) => t.type === "company" && state.ownership[t.id] === ownerId).length
+        : 0;
+      for (let count = 1; count < COMPANY_RENT_BY_COUNT.length; count++) {
+        const isLast = count === COMPANY_RENT_BY_COUNT.length - 1;
+        const label = isLast ? `Rent (${count}+ companies)` : `Rent (${count} compan${count === 1 ? "y" : "ies"})`;
+        const isCurrentTier = ownerId ? ownedCount === count || (isLast && ownedCount >= count) : false;
+        row(label, formatMoney(COMPANY_RENT_BY_COUNT[count] ?? 0), isCurrentTier ? colors[ownerId!] : undefined);
+      }
+    }
   }
 
   renderActions(state: GameState, board: Tile[]): void {

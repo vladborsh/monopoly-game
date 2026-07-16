@@ -7,7 +7,8 @@ import { drawBoard, type PlayerColorMap } from "../render/boardRenderer";
 import { drawTokens } from "../render/tokenRenderer";
 import { drawDice } from "../render/diceRenderer";
 import { drawCasinoReels, resultSymbolsForMultiplier } from "../render/casinoRenderer";
-import { animateTokenMove, animateDiceRoll, animateCasinoSpin } from "../render/animations";
+import { animateTokenMove, animateDiceRoll, animateCasinoSpin, animatePurchaseParticles, type Particle } from "../render/animations";
+import { drawParticles } from "../render/particleRenderer";
 import { describeEvent, type GameUI, type RestartConfigDetail } from "../ui/ui";
 import { clearSavedGame, loadGame, saveGame } from "./persistence";
 
@@ -106,6 +107,12 @@ export class GameController {
           });
           continue;
         }
+        if (event.type === "PropertyBought") {
+          await animatePurchaseParticles(event.tileId, this.playerColors[event.playerId] ?? "#ffffff", (particles) => {
+            this.renderBoard(displayState, {}, displayDice, [0, 0], null, particles);
+          });
+          continue;
+        }
         if (event.type !== "PlayerMoved") continue;
         await animateTokenMove(event.from, event.to, BOARD_SIZE, (pos) => {
           this.renderBoard(displayState, pos ? { [event.playerId]: pos } : {}, displayDice);
@@ -139,11 +146,13 @@ export class GameController {
     diceValues: [number, number] | null = state.lastDice,
     diceRotations: [number, number] = [0, 0],
     casinoSymbols: [string, string, string] | null = null,
+    particles: Particle[] = [],
   ): void {
     drawBoard(this.ctx, this.config.board, state, this.playerColors);
     drawTokens(this.ctx, state, this.playerColors, tokenOverrides);
     drawDice(this.ctx, diceValues, diceRotations);
     drawCasinoReels(this.ctx, casinoSymbols);
+    drawParticles(this.ctx, particles);
   }
 
   private idleCasinoSymbols(state: GameState): [string, string, string] | null {
@@ -154,6 +163,7 @@ export class GameController {
   private render(state: GameState = this.state): void {
     this.renderBoard(state, {}, state.lastDice, [0, 0], this.idleCasinoSymbols(state));
     this.ui.renderPlayers(state, this.playerColors);
+    this.ui.renderTileInfo(state, this.config.board, this.playerColors);
     this.ui.renderActions(state, this.config.board);
     this.ui.setLog(state.log, this.playerColors);
   }

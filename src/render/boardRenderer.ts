@@ -12,7 +12,7 @@ function formatMoney(amount: number): string {
   return amount.toLocaleString("uk-UA");
 }
 
-function tileColor(tile: Tile): string {
+export function tileColor(tile: Tile): string {
   if (tile.type === "property") return GROUP_COLORS[tile.colorGroup] ?? "#999";
   return TILE_TYPE_COLORS[tile.type] ?? "#444";
 }
@@ -50,20 +50,22 @@ export function drawBoard(
     if (isOwnable(tile)) {
       const ownerId = state.ownership[tile.id];
       if (ownerId && playerColors[ownerId]) {
-        const markerX = rect.x + rect.w - 10;
+        const markerX = rect.x + rect.w - 18;
         const markerY = rect.y + 2;
         ctx.fillStyle = playerColors[ownerId];
         ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 1.5;
-        ctx.fillRect(markerX, markerY, 8, 8);
-        ctx.strokeRect(markerX, markerY, 8, 8);
+        ctx.lineWidth = 2;
+        ctx.fillRect(markerX, markerY, 14, 14);
+        ctx.strokeRect(markerX, markerY, 14, 14);
       }
     }
 
     if (tile.type === "property") {
       const houseCount = state.houses[tile.id] ?? 0;
+      const ownerId = state.ownership[tile.id];
+      const houseColor = (ownerId && playerColors[ownerId]) || "#3fbf5f";
       for (let i = 0; i < houseCount; i++) {
-        drawHouseIcon(ctx, rect.x + 2 + i * 8, rect.y + 2);
+        drawHouseIcon(ctx, rect.x + 2 + i * 16, rect.y + 2, houseColor);
       }
     }
 
@@ -95,22 +97,22 @@ export function drawBoard(
   ctx.restore();
 }
 
-function drawHouseIcon(ctx: CanvasRenderingContext2D, x: number, y: number): void {
-  // small house: triangular roof over a square body, ~7x7px
-  ctx.fillStyle = "#3fbf5f";
+function drawHouseIcon(ctx: CanvasRenderingContext2D, x: number, y: number, color: string): void {
+  // house: triangular roof over a square body, ~14x14px
+  ctx.fillStyle = color;
   ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 1;
+  ctx.lineWidth = 1.5;
 
   ctx.beginPath();
-  ctx.moveTo(x, y + 3);
-  ctx.lineTo(x + 3, y);
-  ctx.lineTo(x + 6, y + 3);
+  ctx.moveTo(x, y + 6);
+  ctx.lineTo(x + 6, y);
+  ctx.lineTo(x + 12, y + 6);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  ctx.fillRect(x + 1, y + 3, 4, 4);
-  ctx.strokeRect(x + 1, y + 3, 4, 4);
+  ctx.fillRect(x + 2, y + 6, 8, 8);
+  ctx.strokeRect(x + 2, y + 6, 8, 8);
 }
 
 function wrapText(

@@ -40,7 +40,7 @@ export function calculatePropertyRent(
 }
 
 /** Rent scales with how many company tiles (any kind) the owner holds, railroad-style. */
-const COMPANY_RENT_BY_COUNT = [0, 25_000, 50_000, 100_000, 150_000, 200_000];
+export const COMPANY_RENT_BY_COUNT = [0, 25_000, 50_000, 100_000, 150_000, 200_000];
 
 export function calculateCompanyRent(
   _tile: CompanyTile,
