@@ -1,6 +1,6 @@
 import type { Tile } from "./board";
 import { BOARD_SIZE, SALARY } from "./board";
-import type { GameState, Player, TurnPhase } from "./state";
+import type { GameState, Player, TurnPhase, PendingDebt } from "./state";
 import { currentPlayer } from "./state";
 import type { Action } from "./actions";
 import type { GameEvent } from "./events";
@@ -157,6 +157,7 @@ function chargeCash(
   amount: number,
   creditorId: string | null,
   allowLoan = false,
+  remainingDebts: NonNullable<PendingDebt["remaining"]> = [],
 ): GameState {
   const payer = state.players.find((p) => p.id === payerId);
   if (!payer) return state;
@@ -164,7 +165,12 @@ function chargeCash(
   if (remaining < 0) {
     if (allowLoan && hasAvailableCollateral(state, payerId)) {
       events.push({ type: "LoanRequired", playerId: payerId, creditorId, amount });
-      return { ...state, turnPhase: "awaiting_loan_decision", pendingDebt: { payerId, creditorId, amount } };
+      return {
+        ...state,
+        turnPhase: "awaiting_loan_decision",
+        pendingDebt:
+          remainingDebts.length > 0 ? { payerId, creditorId, amount, remaining: remainingDebts } : { payerId, creditorId, amount },
+      };
     }
     return bankruptPlayer(state, events, payerId, creditorId);
   }
@@ -175,22 +181,36 @@ function chargeCash(
   return next;
 }
 
-function payAllOthers(state: GameState, events: GameEvent[], fromId: string, amount: number): GameState {
+/** Charges a queue of {payerId, creditorId, amount} debts one at a time, skipping any entry whose
+ * payer is already bankrupt, and stopping early if a charge defers to a loan decision. */
+function chargeSequential(
+  state: GameState,
+  events: GameEvent[],
+  debts: NonNullable<PendingDebt["remaining"]>,
+  allowLoan: boolean,
+): GameState {
   let next = state;
-  for (const p of state.players) {
-    if (p.id === fromId || p.bankrupt) continue;
-    next = chargeCash(next, events, fromId, amount, p.id);
+  for (let i = 0; i < debts.length; i++) {
+    const debt = debts[i]!;
+    if (next.players.find((p) => p.id === debt.payerId)?.bankrupt) continue;
+    next = chargeCash(next, events, debt.payerId, debt.amount, debt.creditorId, allowLoan, debts.slice(i + 1));
+    if (next.turnPhase === "awaiting_loan_decision") return next;
   }
   return next;
 }
 
+function payAllOthers(state: GameState, events: GameEvent[], fromId: string, amount: number): GameState {
+  const debts = state.players
+    .filter((p) => p.id !== fromId && !p.bankrupt)
+    .map((p) => ({ payerId: fromId, creditorId: p.id, amount }));
+  return chargeSequential(state, events, debts, true);
+}
+
 function receiveFromAllOthers(state: GameState, events: GameEvent[], toId: string, amount: number): GameState {
-  let next = state;
-  for (const p of state.players) {
-    if (p.id === toId || p.bankrupt) continue;
-    next = chargeCash(next, events, p.id, amount, toId);
-  }
-  return next;
+  const debts = state.players
+    .filter((p) => p.id !== toId && !p.bankrupt)
+    .map((p) => ({ payerId: p.id, creditorId: toId, amount }));
+  return chargeSequential(state, events, debts, true);
 }
 
 function payBank(state: GameState, events: GameEvent[], playerId: string, amount: number, allowLoan = false): GameState {
@@ -248,7 +268,7 @@ function applyCardEffect(
       return resolveLanding(next, events, config, playerId);
     }
     case "pay_bank":
-      return payBank(state, events, playerId, effect.amount);
+      return payBank(state, events, playerId, effect.amount, true);
     case "receive_bank":
       return receiveFromBank(state, playerId, effect.amount);
     case "pay_each_player":
@@ -612,10 +632,11 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
     case "TAKE_LOAN": {
       if (state.turnPhase !== "awaiting_loan_decision" || !state.pendingDebt) return { state, events };
       const debt = state.pendingDebt;
-      if (debt.payerId !== player.id) return { state, events };
+      if (action.playerId !== debt.payerId) return { state, events };
+      const debtorId = debt.payerId;
       const tile = findTile(config.board, action.tileId);
       if (!isOwnable(tile)) return { state, events };
-      if (state.ownership[tile.id] !== player.id) return { state, events };
+      if (state.ownership[tile.id] !== debtorId) return { state, events };
       if (state.loans.some((l) => l.tileId === tile.id)) return { state, events };
 
       let value: number;
@@ -629,17 +650,20 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
       }
       const principal = loanPrincipal(value);
 
-      let next = withPlayer(state, player.id, (p) => ({ ...p, cash: p.cash + principal }));
+      let next = withPlayer(state, debtorId, (p) => ({ ...p, cash: p.cash + principal }));
       next = {
         ...next,
-        loans: [...next.loans, { tileId: tile.id, playerId: player.id, kind: action.kind, principal, owed: value, roundsElapsed: 0 }],
+        loans: [...next.loans, { tileId: tile.id, playerId: debtorId, kind: action.kind, principal, owed: value, roundsElapsed: 0 }],
       };
-      events.push({ type: "LoanTaken", playerId: player.id, tileId: tile.id, kind: action.kind, principal });
+      events.push({ type: "LoanTaken", playerId: debtorId, tileId: tile.id, kind: action.kind, principal });
 
-      const debtor = next.players.find((p) => p.id === player.id)!;
-      if (debtor.cash >= debt.amount || !hasAvailableCollateral(next, player.id)) {
+      const debtor = next.players.find((p) => p.id === debtorId)!;
+      if (debtor.cash >= debt.amount || !hasAvailableCollateral(next, debtorId)) {
         next = chargeCash(next, events, debt.payerId, debt.amount, debt.creditorId, false);
         next = { ...next, pendingDebt: null, turnPhase: "turn_over" };
+        if (debt.remaining && debt.remaining.length > 0) {
+          next = chargeSequential(next, events, debt.remaining, true);
+        }
       }
       return { state: next, events };
     }
@@ -658,9 +682,12 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
     case "DECLARE_BANKRUPTCY": {
       if (state.turnPhase !== "awaiting_loan_decision" || !state.pendingDebt) return { state, events };
       const debt = state.pendingDebt;
-      if (debt.payerId !== player.id) return { state, events };
-      let next = bankruptPlayer(state, events, player.id, debt.creditorId);
+      if (action.playerId !== debt.payerId) return { state, events };
+      let next = bankruptPlayer(state, events, debt.payerId, debt.creditorId);
       next = { ...next, pendingDebt: null, turnPhase: "turn_over" };
+      if (debt.remaining && debt.remaining.length > 0) {
+        next = chargeSequential(next, events, debt.remaining, true);
+      }
       return { state: next, events };
     }
 

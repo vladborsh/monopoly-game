@@ -237,8 +237,12 @@ export class GameUI {
     this.events.dispatchEvent(new CustomEvent("build-house", { detail: { tileId } }));
   }
 
-  private emitTakeLoan(tileId: number, kind: "house" | "property"): void {
-    this.events.dispatchEvent(new CustomEvent("take-loan", { detail: { tileId, kind } }));
+  private emitTakeLoan(tileId: number, kind: "house" | "property", playerId: string): void {
+    this.events.dispatchEvent(new CustomEvent("take-loan", { detail: { tileId, kind, playerId } }));
+  }
+
+  private emitDeclareBankruptcy(playerId: string): void {
+    this.events.dispatchEvent(new CustomEvent("declare-bankruptcy", { detail: { playerId } }));
   }
 
   private emitRepayLoan(tileId: number): void {
@@ -428,23 +432,30 @@ export class GameUI {
       }
       case "awaiting_loan_decision": {
         const debt = state.pendingDebt;
+        const debtor = debt ? state.players.find((p) => p.id === debt.payerId) : undefined;
         const p = document.createElement("p");
-        p.textContent = debt
-          ? `${player.name} cannot cover ${formatMoney(debt.amount)}. Pledge an asset for a loan, or declare bankruptcy.`
-          : "";
+        p.textContent =
+          debt && debtor
+            ? `${debtor.name} cannot cover ${formatMoney(debt.amount)}. Pledge an asset for a loan, or declare bankruptcy.`
+            : "";
         this.actionsEl.appendChild(p);
-        const options = getPledgeableOptions(board, state.ownership, state.houses, state.loans, player.id);
-        for (const option of options) {
-          const label =
-            option.kind === "house"
-              ? `Pledge a house on ${option.tileName} for ${formatMoney(option.principal)}`
-              : `Pledge ${option.tileName} for ${formatMoney(option.principal)}`;
-          const btn = document.createElement("button");
-          btn.textContent = label;
-          btn.addEventListener("click", () => this.emitTakeLoan(option.tileId, option.kind));
-          this.actionsEl.appendChild(btn);
+        if (debtor) {
+          const options = getPledgeableOptions(board, state.ownership, state.houses, state.loans, debtor.id);
+          for (const option of options) {
+            const label =
+              option.kind === "house"
+                ? `Pledge a house on ${option.tileName} for ${formatMoney(option.principal)}`
+                : `Pledge ${option.tileName} for ${formatMoney(option.principal)}`;
+            const btn = document.createElement("button");
+            btn.textContent = label;
+            btn.addEventListener("click", () => this.emitTakeLoan(option.tileId, option.kind, debtor.id));
+            this.actionsEl.appendChild(btn);
+          }
+          const bankruptBtn = document.createElement("button");
+          bankruptBtn.textContent = "Declare bankruptcy";
+          bankruptBtn.addEventListener("click", () => this.emitDeclareBankruptcy(debtor.id));
+          this.actionsEl.appendChild(bankruptBtn);
         }
-        this.actionsEl.appendChild(this.button("Declare bankruptcy", "declare-bankruptcy"));
         break;
       }
       case "turn_over": {

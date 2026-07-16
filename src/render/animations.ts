@@ -8,6 +8,8 @@ const CASINO_SPIN_DURATION_MS = 700;
 const CASINO_TICK_MS = 70;
 const PURCHASE_PARTICLE_DURATION_MS = 750;
 const PURCHASE_PARTICLE_COUNT = 36;
+const HOUSE_PARTICLE_BASE_COUNT = 14;
+const HOUSE_PARTICLE_COUNT_PER_HOUSE = 10;
 
 export interface Particle {
   x: number;
@@ -134,6 +136,60 @@ export function animatePurchaseParticles(
     function step(now: number): void {
       const elapsed = now - start;
       const t = Math.min(1, elapsed / PURCHASE_PARTICLE_DURATION_MS);
+
+      if (t >= 1) {
+        onUpdate([]);
+        resolve();
+        return;
+      }
+
+      const seconds = elapsed / 1000;
+      const particles: Particle[] = seeds.map((seed) => ({
+        x: center.x + seed.vx * seconds,
+        y: center.y + seed.vy * seconds + 40 * seconds * seconds,
+        alpha: 1 - t,
+        radius: seed.radius,
+        color,
+      }));
+      onUpdate(particles);
+      requestAnimationFrame(step);
+    }
+
+    requestAnimationFrame(step);
+  });
+}
+
+/**
+ * Bursts particles outward from a tile's center to celebrate a house being built,
+ * scaling count/speed/duration with the tile's new house total so later houses
+ * on the same tile produce a bigger, faster burst than the first.
+ */
+export function animateHouseBuiltParticles(
+  tileId: number,
+  houses: number,
+  color: string,
+  onUpdate: (particles: Particle[]) => void,
+): Promise<void> {
+  const center = tileCenter(tileId);
+  const speedFactor = 1 + (houses - 1) * 0.35;
+  const duration = 650 + houses * 50;
+  const count = HOUSE_PARTICLE_BASE_COUNT + houses * HOUSE_PARTICLE_COUNT_PER_HOUSE;
+  const seeds = Array.from({ length: count }, () => {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = (30 + Math.random() * Math.random() * 260) * speedFactor;
+    return {
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      radius: 1.5 + Math.random() * 3,
+    };
+  });
+
+  return new Promise((resolve) => {
+    const start = performance.now();
+
+    function step(now: number): void {
+      const elapsed = now - start;
+      const t = Math.min(1, elapsed / duration);
 
       if (t >= 1) {
         onUpdate([]);

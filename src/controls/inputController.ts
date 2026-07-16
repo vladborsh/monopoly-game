@@ -14,7 +14,6 @@ const EVENT_TO_ACTION: Partial<Record<UIEventName, Action>> = {
   "pay-bail": { type: "PAY_BAIL" },
   "use-jail-card": { type: "USE_JAIL_CARD" },
   "end-turn": { type: "END_TURN" },
-  "declare-bankruptcy": { type: "DECLARE_BANKRUPTCY" },
 };
 
 /** Translates UI-emitted intents into engine Action objects. Knows nothing about rendering. */
@@ -42,8 +41,13 @@ export class InputController {
       dispatch({ type: "REJECT_BUYOUT", playerId });
     });
     ui.events.addEventListener("take-loan", (e) => {
-      const { tileId, kind } = (e as CustomEvent<{ tileId: number; kind: "house" | "property" }>).detail;
-      dispatch({ type: "TAKE_LOAN", tileId, kind });
+      const { tileId, kind, playerId } = (e as CustomEvent<{ tileId: number; kind: "house" | "property"; playerId: string }>)
+        .detail;
+      dispatch({ type: "TAKE_LOAN", tileId, kind, playerId });
+    });
+    ui.events.addEventListener("declare-bankruptcy", (e) => {
+      const playerId = (e as CustomEvent<{ playerId: string }>).detail.playerId;
+      dispatch({ type: "DECLARE_BANKRUPTCY", playerId });
     });
     ui.events.addEventListener("repay-loan", (e) => {
       const tileId = (e as CustomEvent<{ tileId: number }>).detail.tileId;

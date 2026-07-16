@@ -12,6 +12,6 @@ export type Action =
   | { type: "USE_JAIL_CARD" }
   | { type: "END_TURN" }
   | { type: "BUILD_HOUSE"; tileId: number }
-  | { type: "TAKE_LOAN"; tileId: number; kind: "house" | "property" }
+  | { type: "TAKE_LOAN"; tileId: number; kind: "house" | "property"; playerId: string }
   | { type: "REPAY_LOAN"; tileId: number }
-  | { type: "DECLARE_BANKRUPTCY" };
+  | { type: "DECLARE_BANKRUPTCY"; playerId: string };

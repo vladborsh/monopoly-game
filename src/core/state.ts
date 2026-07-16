@@ -22,6 +22,8 @@ export interface PendingDebt {
   payerId: string;
   creditorId: string | null;
   amount: number;
+  /** Further charges (e.g. remaining creditors/payers from a "pay/receive each player" card) to process once this one resolves. */
+  remaining?: { payerId: string; creditorId: string | null; amount: number }[];
 }
 
 export interface Player {

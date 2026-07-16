@@ -7,7 +7,14 @@ import { drawBoard, type PlayerColorMap } from "../render/boardRenderer";
 import { drawTokens } from "../render/tokenRenderer";
 import { drawDice } from "../render/diceRenderer";
 import { drawCasinoReels, resultSymbolsForMultiplier } from "../render/casinoRenderer";
-import { animateTokenMove, animateDiceRoll, animateCasinoSpin, animatePurchaseParticles, type Particle } from "../render/animations";
+import {
+  animateTokenMove,
+  animateDiceRoll,
+  animateCasinoSpin,
+  animatePurchaseParticles,
+  animateHouseBuiltParticles,
+  type Particle,
+} from "../render/animations";
 import { drawParticles } from "../render/particleRenderer";
 import { describeEvent, type GameUI, type RestartConfigDetail } from "../ui/ui";
 import { clearSavedGame, loadGame, saveGame } from "./persistence";
@@ -111,6 +118,17 @@ export class GameController {
           await animatePurchaseParticles(event.tileId, this.playerColors[event.playerId] ?? "#ffffff", (particles) => {
             this.renderBoard(displayState, {}, displayDice, [0, 0], null, particles);
           });
+          continue;
+        }
+        if (event.type === "HouseBuilt") {
+          await animateHouseBuiltParticles(
+            event.tileId,
+            event.houses,
+            this.playerColors[event.playerId] ?? "#ffffff",
+            (particles) => {
+              this.renderBoard(displayState, {}, displayDice, [0, 0], null, particles);
+            },
+          );
           continue;
         }
         if (event.type !== "PlayerMoved") continue;
