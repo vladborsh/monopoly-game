@@ -8,6 +8,8 @@ const EVENT_TO_ACTION: Partial<Record<UIEventName, Action>> = {
   roll: { type: "ROLL_DICE" },
   buy: { type: "BUY_PROPERTY" },
   decline: { type: "DECLINE_PROPERTY" },
+  "pay-rent": { type: "PAY_RENT" },
+  "offer-buyout": { type: "OFFER_BUYOUT" },
   "casino-spin": { type: "PLAY_CASINO" },
   "casino-skip": { type: "SKIP_CASINO" },
   "pay-bail": { type: "PAY_BAIL" },
@@ -26,6 +28,14 @@ export class InputController {
     ui.events.addEventListener("build-house", (e) => {
       const tileId = (e as CustomEvent<{ tileId: number }>).detail.tileId;
       dispatch({ type: "BUILD_HOUSE", tileId });
+    });
+    ui.events.addEventListener("accept-buyout", (e) => {
+      const playerId = (e as CustomEvent<{ playerId: string }>).detail.playerId;
+      dispatch({ type: "ACCEPT_BUYOUT", playerId });
+    });
+    ui.events.addEventListener("reject-buyout", (e) => {
+      const playerId = (e as CustomEvent<{ playerId: string }>).detail.playerId;
+      dispatch({ type: "REJECT_BUYOUT", playerId });
     });
   }
 }

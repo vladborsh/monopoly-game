@@ -3,9 +3,18 @@ import type { LogLine } from "./log";
 export type TurnPhase =
   | "awaiting_roll"
   | "awaiting_property_decision"
+  | "awaiting_rent_or_buyout_choice"
+  | "awaiting_buyout_response"
   | "awaiting_casino_spin"
   | "turn_over"
   | "game_over";
+
+export interface PendingOffer {
+  tileId: number;
+  buyerId: string;
+  ownerId: string;
+  amount: number;
+}
 
 export interface Player {
   id: string;
@@ -25,6 +34,7 @@ export interface GameState {
   ownership: Record<number, string | null>;
   /** tileId -> house count (0-3), only meaningful for property tiles */
   houses: Record<number, number>;
+  pendingOffer: PendingOffer | null;
   chanceOrder: string[];
   chanceIndex: number;
   treasuryOrder: string[];

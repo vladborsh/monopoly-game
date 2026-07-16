@@ -67,6 +67,7 @@ export function createInitialState(
     currentPlayerIndex: 0,
     ownership,
     houses,
+    pendingOffer: null,
     chanceOrder: shuffleDeck(config.chanceCards.map((c) => c.id), chanceFloats),
     chanceIndex: 0,
     treasuryOrder: shuffleDeck(config.treasuryCards.map((c) => c.id), treasuryFloats),
@@ -270,10 +271,14 @@ function resolveLanding(state: GameState, events: GameEvent[], config: GameConfi
       if (ownerId === playerId) {
         return { ...state, turnPhase: "turn_over" };
       }
-      const rent = calculateRent(tile, state.ownership, ownerId, config.board, state.houses);
-      const next = chargeCash(state, events, playerId, rent, ownerId);
-      events.push({ type: "RentCharged", payerId: playerId, ownerId, amount: rent });
-      return { ...next, turnPhase: "turn_over" };
+      const houseCount = tile.type === "property" ? (state.houses[tile.id] ?? 0) : 0;
+      if (houseCount > 0) {
+        const rent = calculateRent(tile, state.ownership, ownerId, config.board, state.houses);
+        const next = chargeCash(state, events, playerId, rent, ownerId);
+        events.push({ type: "RentCharged", payerId: playerId, ownerId, amount: rent });
+        return { ...next, turnPhase: "turn_over" };
+      }
+      return { ...state, turnPhase: "awaiting_rent_or_buyout_choice" };
     }
   }
 }
@@ -375,6 +380,74 @@ export function reduce(state: GameState, action: Action, config: GameConfig): Re
       const tile = findTile(config.board, player.position);
       events.push({ type: "PropertyDeclined", playerId: player.id, tileId: tile.id });
       return { state: { ...state, turnPhase: "turn_over" }, events };
+    }
+
+    case "PAY_RENT": {
+      if (state.turnPhase !== "awaiting_rent_or_buyout_choice") return { state, events };
+      const tile = findTile(config.board, player.position);
+      const ownerId = state.ownership[tile.id];
+      if (!ownerId) return { state, events };
+      const rent = calculateRent(tile, state.ownership, ownerId, config.board, state.houses);
+      const next = chargeCash(state, events, player.id, rent, ownerId);
+      events.push({ type: "RentCharged", payerId: player.id, ownerId, amount: rent });
+      return { state: { ...next, turnPhase: "turn_over" }, events };
+    }
+
+    case "OFFER_BUYOUT": {
+      if (state.turnPhase !== "awaiting_rent_or_buyout_choice") return { state, events };
+      const tile = findTile(config.board, player.position);
+      if (!isOwnable(tile)) return { state, events };
+      const ownerId = state.ownership[tile.id];
+      if (!ownerId) return { state, events };
+      const amount = Math.round(tile.price * 1.2);
+      events.push({ type: "BuyoutOffered", tileId: tile.id, buyerId: player.id, ownerId, amount });
+      return {
+        state: {
+          ...state,
+          turnPhase: "awaiting_buyout_response",
+          pendingOffer: { tileId: tile.id, buyerId: player.id, ownerId, amount },
+        },
+        events,
+      };
+    }
+
+    case "ACCEPT_BUYOUT": {
+      if (state.turnPhase !== "awaiting_buyout_response" || !state.pendingOffer) return { state, events };
+      const offer = state.pendingOffer;
+      if (action.playerId !== offer.ownerId) return { state, events };
+      let next = chargeCash(state, events, offer.buyerId, offer.amount, offer.ownerId);
+      next = { ...next, pendingOffer: null };
+      const buyer = next.players.find((p) => p.id === offer.buyerId);
+      if (buyer && !buyer.bankrupt) {
+        next = { ...next, ownership: { ...next.ownership, [offer.tileId]: offer.buyerId } };
+      }
+      events.push({
+        type: "BuyoutAccepted",
+        tileId: offer.tileId,
+        buyerId: offer.buyerId,
+        ownerId: offer.ownerId,
+        amount: offer.amount,
+      });
+      return { state: { ...next, turnPhase: "turn_over" }, events };
+    }
+
+    case "REJECT_BUYOUT": {
+      if (state.turnPhase !== "awaiting_buyout_response" || !state.pendingOffer) return { state, events };
+      const offer = state.pendingOffer;
+      if (action.playerId !== offer.ownerId) return { state, events };
+      events.push({
+        type: "BuyoutRejected",
+        tileId: offer.tileId,
+        buyerId: offer.buyerId,
+        ownerId: offer.ownerId,
+        amount: offer.amount,
+      });
+      const tile = findTile(config.board, offer.tileId);
+      const rent = calculateRent(tile, state.ownership, offer.ownerId, config.board, state.houses);
+      let next = chargeCash(state, events, offer.buyerId, rent, offer.ownerId);
+      next = { ...next, pendingOffer: null };
+      events.push({ type: "RentCharged", payerId: offer.buyerId, ownerId: offer.ownerId, amount: rent });
+      return { state: { ...next, turnPhase: "turn_over" }, events };
     }
 
     case "PLAY_CASINO": {

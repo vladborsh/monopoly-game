@@ -8,6 +8,9 @@ export type GameEvent =
   | { type: "RentCharged"; payerId: string; ownerId: string; amount: number }
   | { type: "PropertyBought"; playerId: string; tileId: number; price: number }
   | { type: "PropertyDeclined"; playerId: string; tileId: number }
+  | { type: "BuyoutOffered"; tileId: number; buyerId: string; ownerId: string; amount: number }
+  | { type: "BuyoutAccepted"; tileId: number; buyerId: string; ownerId: string; amount: number }
+  | { type: "BuyoutRejected"; tileId: number; buyerId: string; ownerId: string; amount: number }
   | { type: "TaxCharged"; playerId: string; amount: number }
   | { type: "CardDrawn"; playerId: string; deck: "chance" | "treasury"; card: Card }
   | { type: "PlayerJailed"; playerId: string; reason: "doubles" | "card" }

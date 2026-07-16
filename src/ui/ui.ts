@@ -4,7 +4,7 @@ import type { GameState } from "../core/state";
 import type { GameEvent } from "../core/events";
 import type { LogLine, LogSegment } from "../core/log";
 import type { PlayerColorMap } from "../render/boardRenderer";
-import { ownsFullColorGroup } from "../core/rules";
+import { ownsFullColorGroup, calculateRent } from "../core/rules";
 import { houseCostForGroup, MAX_HOUSES } from "../core/houses";
 import { DEFAULT_STARTING_CASH } from "../core/engine";
 
@@ -12,6 +12,10 @@ export type UIEventName =
   | "roll"
   | "buy"
   | "decline"
+  | "pay-rent"
+  | "offer-buyout"
+  | "accept-buyout"
+  | "reject-buyout"
   | "casino-spin"
   | "casino-skip"
   | "pay-bail"
@@ -63,6 +67,22 @@ export function describeEvent(
         name(event.playerId),
         { text: ` bought ${board[event.tileId]?.name ?? event.tileId} for ${formatMoney(event.price)}` },
       ];
+    case "BuyoutOffered":
+      return [
+        name(event.buyerId),
+        {
+          text: ` offered to buy ${board[event.tileId]?.name ?? event.tileId} for ${formatMoney(event.amount)}`,
+        },
+      ];
+    case "BuyoutAccepted":
+      return [
+        name(event.ownerId),
+        { text: ` accepted the offer, selling ${board[event.tileId]?.name ?? event.tileId} to ` },
+        name(event.buyerId),
+        { text: ` for ${formatMoney(event.amount)}` },
+      ];
+    case "BuyoutRejected":
+      return [name(event.ownerId), { text: " rejected the buyout offer" }];
     case "TaxCharged":
       return [name(event.playerId), { text: ` paid ${formatMoney(event.amount)} tax` }];
     case "CardDrawn":
@@ -170,6 +190,17 @@ export class GameUI {
     this.events.dispatchEvent(new CustomEvent("build-house", { detail: { tileId } }));
   }
 
+  private emitBuyoutResponse(name: "accept-buyout" | "reject-buyout", playerId: string): void {
+    this.events.dispatchEvent(new CustomEvent(name, { detail: { playerId } }));
+  }
+
+  private buyoutButton(label: string, name: "accept-buyout" | "reject-buyout", ownerId: string): HTMLButtonElement {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.addEventListener("click", () => this.emitBuyoutResponse(name, ownerId));
+    return btn;
+  }
+
   private button(label: string, name: UIEventName, disabled = false): HTMLButtonElement {
     const btn = document.createElement("button");
     btn.textContent = label;
@@ -218,6 +249,32 @@ export class GameUI {
         const price = tile && isOwnable(tile) ? tile.price : 0;
         this.actionsEl.appendChild(this.button(`Buy for ${formatMoney(price)}`, "buy", player.cash < price));
         this.actionsEl.appendChild(this.button("Decline", "decline"));
+        break;
+      }
+      case "awaiting_rent_or_buyout_choice": {
+        const tile = board[player.position];
+        const ownerId = tile ? state.ownership[tile.id] : null;
+        if (tile && isOwnable(tile) && ownerId) {
+          const rent = calculateRent(tile, state.ownership, ownerId, board, state.houses);
+          const buyoutAmount = Math.round(tile.price * 1.2);
+          this.actionsEl.appendChild(this.button(`Pay rent (${formatMoney(rent)})`, "pay-rent"));
+          this.actionsEl.appendChild(
+            this.button(`Offer buyout (${formatMoney(buyoutAmount)})`, "offer-buyout", player.cash <= 0),
+          );
+        }
+        break;
+      }
+      case "awaiting_buyout_response": {
+        const offer = state.pendingOffer;
+        if (offer) {
+          const ownerName = state.players.find((p) => p.id === offer.ownerId)?.name ?? offer.ownerId;
+          const buyerName = state.players.find((p) => p.id === offer.buyerId)?.name ?? offer.buyerId;
+          const p = document.createElement("p");
+          p.textContent = `${ownerName}: ${buyerName} offers ${formatMoney(offer.amount)} for this property. Accept?`;
+          this.actionsEl.appendChild(p);
+          this.actionsEl.appendChild(this.buyoutButton("Accept", "accept-buyout", offer.ownerId));
+          this.actionsEl.appendChild(this.buyoutButton("Reject", "reject-buyout", offer.ownerId));
+        }
         break;
       }
       case "awaiting_casino_spin": {

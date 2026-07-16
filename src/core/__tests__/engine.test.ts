@@ -69,6 +69,8 @@ describe("rent", () => {
     state = { ...state, ownership: { ...state.ownership, 3: "B" } };
 
     ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    expect(state.turnPhase).toBe("awaiting_rent_or_buyout_choice");
+    ({ state } = reduce(state, { type: "PAY_RENT" }, config));
 
     expect(state.players[0]?.cash).toBe(500_000 - 6_000);
     expect(state.players[1]?.cash).toBe(500_000 + 6_000);
@@ -84,6 +86,8 @@ describe("rent", () => {
     state = { ...state, ownership };
 
     ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    expect(state.turnPhase).toBe("awaiting_rent_or_buyout_choice");
+    ({ state } = reduce(state, { type: "PAY_RENT" }, config));
 
     expect(state.players[0]?.cash).toBe(500_000 - 16_000);
   });
@@ -98,10 +102,159 @@ describe("rent", () => {
     };
 
     ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    expect(state.turnPhase).toBe("awaiting_rent_or_buyout_choice");
+    ({ state } = reduce(state, { type: "PAY_RENT" }, config));
 
     expect(state.players[0]?.bankrupt).toBe(true);
     expect(state.players[0]?.cash).toBe(0);
     expect(Object.values(state.ownership).some((o) => o === "A")).toBe(false);
+  });
+});
+
+describe("rent-or-buyout choice", () => {
+  it("offers a choice when landing on an owned, house-less property", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = { ...state, ownership: { ...state.ownership, 3: "B" } };
+
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+
+    expect(state.turnPhase).toBe("awaiting_rent_or_buyout_choice");
+    expect(state.players[0]?.cash).toBe(500_000);
+    expect(state.players[1]?.cash).toBe(500_000);
+  });
+
+  it("PAY_RENT charges normal rent and ends the turn", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = { ...state, ownership: { ...state.ownership, 3: "B" } };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+
+    ({ state } = reduce(state, { type: "PAY_RENT" }, config));
+
+    expect(state.players[0]?.cash).toBe(500_000 - 6_000);
+    expect(state.players[1]?.cash).toBe(500_000 + 6_000);
+    expect(state.turnPhase).toBe("turn_over");
+  });
+
+  it("OFFER_BUYOUT sets a pending offer at 120% of the tile price", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = { ...state, ownership: { ...state.ownership, 3: "B" } };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+
+    ({ state } = reduce(state, { type: "OFFER_BUYOUT" }, config));
+
+    expect(state.turnPhase).toBe("awaiting_buyout_response");
+    expect(state.pendingOffer).toEqual({ tileId: 3, buyerId: "A", ownerId: "B", amount: Math.round(80_000 * 1.2) });
+    expect(state.players[0]?.cash).toBe(500_000);
+    expect(state.players[1]?.cash).toBe(500_000);
+  });
+
+  it("ACCEPT_BUYOUT transfers ownership and pays the owner", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = { ...state, ownership: { ...state.ownership, 3: "B" } };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    ({ state } = reduce(state, { type: "OFFER_BUYOUT" }, config));
+    const amount = Math.round(80_000 * 1.2);
+
+    ({ state } = reduce(state, { type: "ACCEPT_BUYOUT", playerId: "B" }, config));
+
+    expect(state.ownership[3]).toBe("A");
+    expect(state.players[0]?.cash).toBe(500_000 - amount);
+    expect(state.players[1]?.cash).toBe(500_000 + amount);
+    expect(state.pendingOffer).toBeNull();
+    expect(state.turnPhase).toBe("turn_over");
+  });
+
+  it("ignores ACCEPT_BUYOUT/REJECT_BUYOUT from a player other than the offer's owner", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = { ...state, ownership: { ...state.ownership, 3: "B" } };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    ({ state } = reduce(state, { type: "OFFER_BUYOUT" }, config));
+    const before = state;
+
+    const accept = reduce(state, { type: "ACCEPT_BUYOUT", playerId: "A" }, config);
+    const reject = reduce(state, { type: "REJECT_BUYOUT", playerId: "A" }, config);
+
+    expect(accept.state).toEqual(before);
+    expect(reject.state).toEqual(before);
+  });
+
+  it("REJECT_BUYOUT charges normal rent instead and leaves ownership unchanged", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = { ...state, ownership: { ...state.ownership, 3: "B" } };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    ({ state } = reduce(state, { type: "OFFER_BUYOUT" }, config));
+
+    ({ state } = reduce(state, { type: "REJECT_BUYOUT", playerId: "B" }, config));
+
+    expect(state.ownership[3]).toBe("B");
+    expect(state.players[0]?.cash).toBe(500_000 - 6_000);
+    expect(state.players[1]?.cash).toBe(500_000 + 6_000);
+    expect(state.pendingOffer).toBeNull();
+    expect(state.turnPhase).toBe("turn_over");
+  });
+
+  it("skips the choice and auto-charges rent when the property has houses", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 6 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    const blueGroupIds = BOARD_TILES.filter((t) => t.type === "property" && t.colorGroup === "blue").map((t) => t.id);
+    const ownership = { ...state.ownership };
+    for (const id of blueGroupIds) ownership[id] = "B";
+    state = { ...state, ownership, houses: { ...state.houses, 6: 1 } };
+
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+
+    expect(state.turnPhase).toBe("turn_over");
+    expect(state.players[0]?.cash).toBeLessThan(500_000);
+  });
+
+  it("offers the choice for an owned company tile (never has houses)", () => {
+    // sum 5, non-double -> lands on tile 5 (Авіакомпанія, a company tile)
+    const seed = findSeed((d) => d[0] + d[1] === 5 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = { ...state, ownership: { ...state.ownership, 5: "B" } };
+
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+
+    expect(state.turnPhase).toBe("awaiting_rent_or_buyout_choice");
+  });
+
+  it("leaves the tile with the original owner if the buyer goes bankrupt paying the buyout", () => {
+    const seed = findSeed((d) => d[0] + d[1] === 3 && d[0] !== d[1]);
+    let state = createInitialState(players(), config, seed);
+    state = {
+      ...state,
+      ownership: { ...state.ownership, 3: "B" },
+      players: state.players.map((p) => (p.id === "A" ? { ...p, cash: 1_000 } : p)),
+    };
+    ({ state } = reduce(state, { type: "ROLL_DICE" }, config));
+    ({ state } = reduce(state, { type: "OFFER_BUYOUT" }, config));
+
+    ({ state } = reduce(state, { type: "ACCEPT_BUYOUT", playerId: "B" }, config));
+
+    expect(state.ownership[3]).toBe("B");
+    expect(state.players[0]?.bankrupt).toBe(true);
+    expect(state.players[0]?.cash).toBe(0);
+    expect(state.players[1]?.cash).toBe(500_000);
+  });
+
+  it("rejects PAY_RENT/OFFER_BUYOUT/ACCEPT_BUYOUT/REJECT_BUYOUT from the wrong phase", () => {
+    let state = createInitialState(players(), config, 1);
+
+    const payRent = reduce(state, { type: "PAY_RENT" }, config);
+    const offer = reduce(state, { type: "OFFER_BUYOUT" }, config);
+    const accept = reduce(state, { type: "ACCEPT_BUYOUT", playerId: "B" }, config);
+    const reject = reduce(state, { type: "REJECT_BUYOUT", playerId: "B" }, config);
+
+    expect(payRent.state).toEqual(state);
+    expect(offer.state).toEqual(state);
+    expect(accept.state).toEqual(state);
+    expect(reject.state).toEqual(state);
   });
 });
 
