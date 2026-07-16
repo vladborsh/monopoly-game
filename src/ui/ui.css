@@ -1,0 +1,71 @@
+.ui-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-family: sans-serif;
+  color: #e8e8e8;
+  min-width: 240px;
+}
+
+.ui-players {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ui-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.ui-player--active {
+  background: #2a3038;
+}
+
+.ui-player--bankrupt {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.ui-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.ui-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ui-actions button {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: none;
+  background: #3f7fbf;
+  color: white;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.ui-actions button:disabled {
+  background: #444;
+  cursor: not-allowed;
+}
+
+.ui-log {
+  max-height: 240px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: #a8b0b8;
+  border-top: 1px solid #333;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
