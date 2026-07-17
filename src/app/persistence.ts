@@ -3,7 +3,7 @@ import type { GameConfig } from "../core/engine";
 import type { Tile } from "../core/board";
 
 const STORAGE_KEY = "monopoly:save";
-const SCHEMA_VERSION = 9; // bump whenever GameState/Player/Tile shape changes (v9: added GameState.buyoutCount)
+const SCHEMA_VERSION = 10; // bump whenever GameState/Player/Tile shape changes (v10: added Player.isAI)
 
 interface SavedGame {
   schemaVersion: number;

@@ -35,6 +35,7 @@ export interface Player {
   jailTurns: number;
   getOutOfJailCards: number;
   bankrupt: boolean;
+  isAI: boolean;
 }
 
 export interface GameState {

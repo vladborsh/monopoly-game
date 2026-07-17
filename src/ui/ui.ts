@@ -39,11 +39,13 @@ export type UIEventName =
 export interface RestartConfigDetail {
   playerCount: number;
   startingCash: number;
+  aiFlags: boolean[];
 }
 
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 8;
 const DEFAULT_PLAYER_COUNT = 2;
+const MAX_AI_CHAT_MESSAGES = 50;
 
 function formatMoney(amount: number): string {
   return amount.toLocaleString("uk-UA");
@@ -160,15 +162,22 @@ export class GameUI {
   private tileInfoEl: HTMLElement;
   private actionsEl: HTMLElement;
   private logEl: HTMLElement;
+  private aiChatEl: HTMLElement;
   private restartDialog: HTMLDialogElement;
   private restartForm: HTMLFormElement;
   private playerCountInput: HTMLInputElement;
   private startingCashInput: HTMLInputElement;
+  private aiListEl: HTMLElement;
   private snackbarsEl: HTMLElement;
 
-  constructor(root: HTMLElement, snackbarsRoot: HTMLElement) {
+  constructor(root: HTMLElement, snackbarsRoot: HTMLElement, aiChatRoot: HTMLElement) {
     this.root = root;
     this.snackbarsEl = snackbarsRoot;
+    aiChatRoot.innerHTML = `
+      <div class="ui-ai-chat-title">AI chat</div>
+      <div id="ui-ai-chat" class="ui-ai-chat"></div>
+    `;
+    this.aiChatEl = aiChatRoot.querySelector("#ui-ai-chat")!;
     this.root.innerHTML = `
       <div class="ui-panel">
         <div class="ui-header">
@@ -186,6 +195,7 @@ export class GameUI {
             Players
             <input type="number" id="ui-restart-players" min="${MIN_PLAYERS}" max="${MAX_PLAYERS}" step="1" value="${DEFAULT_PLAYER_COUNT}" required />
           </label>
+          <div id="ui-restart-ai-list" class="ui-restart-ai-list"></div>
           <label>
             Starting budget
             <input type="number" id="ui-restart-cash" min="0" step="10000" value="${DEFAULT_STARTING_CASH}" required />
@@ -205,28 +215,83 @@ export class GameUI {
     this.restartForm = this.root.querySelector("#ui-restart-form")!;
     this.playerCountInput = this.root.querySelector("#ui-restart-players")!;
     this.startingCashInput = this.root.querySelector("#ui-restart-cash")!;
+    this.aiListEl = this.root.querySelector("#ui-restart-ai-list")!;
 
     this.root.querySelector("#ui-restart-btn")!.addEventListener("click", () => this.openRestartDialog());
     this.root.querySelector("#ui-restart-cancel")!.addEventListener("click", () => this.restartDialog.close());
+    this.playerCountInput.addEventListener("input", () => this.syncAiCheckboxCount());
     this.restartForm.addEventListener("submit", (e) => {
       e.preventDefault();
       this.confirmRestart();
     });
   }
 
+  private renderAiCheckboxes(count: number, checked: boolean[] = []): void {
+    this.aiListEl.innerHTML = "";
+    for (let i = 0; i < count; i++) {
+      const label = document.createElement("label");
+      label.className = "ui-restart-ai-row";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = checked[i] ?? false;
+      label.appendChild(checkbox);
+      label.appendChild(document.createTextNode(` Player ${i + 1} is a bot`));
+      this.aiListEl.appendChild(label);
+    }
+  }
+
+  private syncAiCheckboxCount(): void {
+    const count = Math.min(MAX_PLAYERS, Math.max(MIN_PLAYERS, Math.round(Number(this.playerCountInput.value)) || MIN_PLAYERS));
+    const existingChecked = Array.from(this.aiListEl.querySelectorAll("input[type=checkbox]")).map(
+      (el) => (el as HTMLInputElement).checked,
+    );
+    this.renderAiCheckboxes(count, existingChecked);
+  }
+
   private openRestartDialog(): void {
     this.playerCountInput.value = String(DEFAULT_PLAYER_COUNT);
     this.startingCashInput.value = String(DEFAULT_STARTING_CASH);
+    this.renderAiCheckboxes(DEFAULT_PLAYER_COUNT);
     this.restartDialog.showModal();
   }
 
   private confirmRestart(): void {
     const playerCount = Math.min(MAX_PLAYERS, Math.max(MIN_PLAYERS, Math.round(Number(this.playerCountInput.value))));
     const startingCash = Math.max(0, Math.round(Number(this.startingCashInput.value)));
+    const aiFlags = Array.from(this.aiListEl.querySelectorAll("input[type=checkbox]"))
+      .slice(0, playerCount)
+      .map((el) => (el as HTMLInputElement).checked);
     this.restartDialog.close();
     this.events.dispatchEvent(
-      new CustomEvent<RestartConfigDetail>("restart-config", { detail: { playerCount, startingCash } }),
+      new CustomEvent<RestartConfigDetail>("restart-config", { detail: { playerCount, startingCash, aiFlags } }),
     );
+  }
+
+  showAiThinking(name: string): void {
+    this.actionsEl.innerHTML = "";
+    const p = document.createElement("p");
+    p.textContent = `${name} (bot) is thinking...`;
+    this.actionsEl.appendChild(p);
+  }
+
+  addAiChatMessage(playerId: string, name: string, text: string, colors: PlayerColorMap): void {
+    const row = document.createElement("div");
+    row.className = "ui-ai-chat__msg";
+    const nameEl = document.createElement("span");
+    nameEl.className = "ui-ai-chat__name";
+    nameEl.style.color = colors[playerId] ?? "inherit";
+    nameEl.textContent = `${name}: `;
+    row.appendChild(nameEl);
+    row.appendChild(document.createTextNode(text));
+    this.aiChatEl.appendChild(row);
+    while (this.aiChatEl.childElementCount > MAX_AI_CHAT_MESSAGES) {
+      this.aiChatEl.firstElementChild?.remove();
+    }
+    this.aiChatEl.scrollTop = this.aiChatEl.scrollHeight;
+  }
+
+  clearAiChat(): void {
+    this.aiChatEl.innerHTML = "";
   }
 
   private emit(name: UIEventName): void {
@@ -284,7 +349,7 @@ export class GameUI {
       row.appendChild(swatch);
       const loanCount = state.loans.filter((l) => l.playerId === p.id).length;
       const label = document.createElement("span");
-      label.textContent = `${p.name}: ${formatMoney(p.cash)}${p.inJail ? " (jail)" : ""}${p.bankrupt ? " (bankrupt)" : ""}${loanCount > 0 ? ` (loans: ${loanCount})` : ""}`;
+      label.textContent = `${p.name}${p.isAI ? " 🤖" : ""}: ${formatMoney(p.cash)}${p.inJail ? " (jail)" : ""}${p.bankrupt ? " (bankrupt)" : ""}${loanCount > 0 ? ` (loans: ${loanCount})` : ""}`;
       row.appendChild(label);
       this.playersEl.appendChild(row);
     });

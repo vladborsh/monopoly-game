@@ -22,3 +22,18 @@ body {
   border-radius: 8px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
 }
+
+.ai-chat-panel {
+  width: 260px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #14181d;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 12px;
+  box-sizing: border-box;
+  color: #e8e8e8;
+  font-family: sans-serif;
+}

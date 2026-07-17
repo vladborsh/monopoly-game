@@ -11,6 +11,7 @@ import { BOARD_PX } from "./render/layout";
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <div class="game-layout">
+    <div id="ai-chat-root" class="ai-chat-panel"></div>
     <div id="board-wrapper" class="board-wrapper">
       <canvas id="board-canvas" width="${BOARD_PX}" height="${BOARD_PX}"></canvas>
       <div id="ui-snackbars" class="ui-snackbars"></div>
@@ -22,14 +23,15 @@ app.innerHTML = `
 const canvas = document.querySelector<HTMLCanvasElement>("#board-canvas")!;
 const uiRoot = document.querySelector<HTMLDivElement>("#ui-root")!;
 const snackbarsRoot = document.querySelector<HTMLDivElement>("#ui-snackbars")!;
+const aiChatRoot = document.querySelector<HTMLDivElement>("#ai-chat-root")!;
 
 const config: GameConfig = { board: BOARD_TILES, chanceCards: CHANCE_CARDS, treasuryCards: TREASURY_CARDS };
 const players = [
-  { id: "p1", name: "Player 1" },
-  { id: "p2", name: "Player 2" },
+  { id: "p1", name: "Player 1", isAI: false },
+  { id: "p2", name: "Player 2", isAI: false },
 ];
 
-const ui = new GameUI(uiRoot, snackbarsRoot);
+const ui = new GameUI(uiRoot, snackbarsRoot, aiChatRoot);
 const controller = new GameController(canvas, ui, config, players, Date.now());
 new InputController(ui, (action) => controller.dispatch(action));
 

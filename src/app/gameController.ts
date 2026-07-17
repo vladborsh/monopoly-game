@@ -18,27 +18,26 @@ import {
 import { drawParticles } from "../render/particleRenderer";
 import { describeEvent, type GameUI, type RestartConfigDetail } from "../ui/ui";
 import { clearSavedGame, loadGame, saveGame } from "./persistence";
+import { actionablePlayerId } from "../core/legalActions";
+import { fetchAiAction } from "../net/aiClient";
 
 const PLAYER_PALETTE = ["#e63946", "#2a9d8f", "#e9c46a", "#a663cc", "#f4a261", "#457b9d"];
 const MAX_LOG_ENTRIES = 30;
+
+type PlayerSetup = { id: string; name: string; isAI: boolean };
 
 export class GameController {
   state: GameState;
   private ui: GameUI;
   private config: GameConfig;
-  private players: { id: string; name: string }[];
+  private players: PlayerSetup[];
   private ctx: CanvasRenderingContext2D;
   private playerColors: PlayerColorMap = {};
   private transport: Transport = new LocalTransport();
   private busy = false;
+  private aiTurnPending = false;
 
-  constructor(
-    canvas: HTMLCanvasElement,
-    ui: GameUI,
-    config: GameConfig,
-    players: { id: string; name: string }[],
-    rngSeed: number,
-  ) {
+  constructor(canvas: HTMLCanvasElement, ui: GameUI, config: GameConfig, players: PlayerSetup[], rngSeed: number) {
     this.ui = ui;
     this.config = config;
     this.players = players;
@@ -50,27 +49,35 @@ export class GameController {
     const restored = loadGame(config, players);
     this.state = restored ?? createInitialState(players, config, rngSeed);
     if (!restored) saveGame(this.state, this.config, this.players);
-    this.transport.onReceive((action) => void this.applyAction(action));
+    this.transport.onReceive((action) => {
+      void this.applyAction(action).then(() => this.maybeTriggerAiTurn());
+    });
     this.ui.events.addEventListener("new-game", () => this.startNewGame());
     this.ui.events.addEventListener("restart-config", (e) =>
       this.restartGame((e as CustomEvent<RestartConfigDetail>).detail),
     );
     this.render();
+    void this.maybeTriggerAiTurn();
   }
 
   dispatch(action: Action): void {
+    if (this.aiTurnPending) return;
     this.transport.send(action);
   }
 
-  private assignPlayerColors(players: { id: string; name: string }[]): void {
+  private assignPlayerColors(players: PlayerSetup[]): void {
     this.playerColors = {};
     players.forEach((p, i) => {
       this.playerColors[p.id] = PLAYER_PALETTE[i % PLAYER_PALETTE.length] ?? "#ffffff";
     });
   }
 
-  private buildPlayers(count: number): { id: string; name: string }[] {
-    return Array.from({ length: count }, (_, i) => ({ id: `p${i + 1}`, name: `Player ${i + 1}` }));
+  private buildPlayers(count: number, aiFlags: boolean[] = []): PlayerSetup[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `p${i + 1}`,
+      name: `Player ${i + 1}`,
+      isAI: aiFlags[i] ?? false,
+    }));
   }
 
   private startNewGame(): void {
@@ -78,17 +85,44 @@ export class GameController {
     clearSavedGame();
     this.state = createInitialState(this.players, this.config, Date.now());
     saveGame(this.state, this.config, this.players);
+    this.ui.clearAiChat();
     this.render();
+    void this.maybeTriggerAiTurn();
   }
 
   private restartGame(detail: RestartConfigDetail): void {
     if (this.busy) return;
-    this.players = this.buildPlayers(detail.playerCount);
+    this.players = this.buildPlayers(detail.playerCount, detail.aiFlags);
     this.assignPlayerColors(this.players);
     clearSavedGame();
     this.state = createInitialState(this.players, this.config, Date.now(), detail.startingCash);
     saveGame(this.state, this.config, this.players);
+    this.ui.clearAiChat();
     this.render();
+    void this.maybeTriggerAiTurn();
+  }
+
+  /** If the player who must act next is AI-controlled, fetch and dispatch its move automatically. */
+  private async maybeTriggerAiTurn(): Promise<void> {
+    if (this.busy || this.aiTurnPending) return;
+    if (this.state.turnPhase === "game_over") return;
+    const actorId = actionablePlayerId(this.state);
+    const actor = this.state.players.find((p) => p.id === actorId);
+    if (!actor || !actor.isAI || actor.bankrupt) return;
+
+    this.aiTurnPending = true;
+    this.ui.showAiThinking(actor.name);
+    try {
+      const { action, reasoning } = await fetchAiAction(this.state, actorId);
+      this.aiTurnPending = false;
+      if (reasoning) this.ui.addAiChatMessage(actor.id, actor.name, reasoning, this.playerColors);
+      await this.applyAction(action);
+      void this.maybeTriggerAiTurn();
+    } catch (err) {
+      console.error("AI move failed, falling back to manual control:", err);
+      this.aiTurnPending = false;
+      this.render();
+    }
   }
 
   private async applyAction(action: Action): Promise<void> {

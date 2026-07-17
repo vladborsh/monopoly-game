@@ -35,7 +35,7 @@ export const DEFAULT_STARTING_CASH = 500_000;
 const STARTING_JACKPOT = 200_000;
 
 export function createInitialState(
-  players: { id: string; name: string }[],
+  players: { id: string; name: string; isAI?: boolean }[],
   config: GameConfig,
   rngSeed: number,
   startingCash: number = DEFAULT_STARTING_CASH,
@@ -61,6 +61,7 @@ export function createInitialState(
     jailTurns: 0,
     getOutOfJailCards: 0,
     bankrupt: false,
+    isAI: p.isAI ?? false,
   }));
 
   const ownership: Record<number, string | null> = {};
